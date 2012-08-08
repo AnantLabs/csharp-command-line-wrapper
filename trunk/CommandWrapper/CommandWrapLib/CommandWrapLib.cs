@@ -8,6 +8,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using System.Reflection;
+using System.Xml;
 
 namespace CommandWrapLib
 {
@@ -24,7 +25,7 @@ namespace CommandWrapLib
         public static int ConsoleWrapper(Assembly a, string classname, string staticfunctionname, string[] args)
         {
             // Interpret "no assembly" as "currently executing assembly"
-            if (a == null) a = Assembly.GetExecutingAssembly();
+            if (a == null) a = Assembly.GetCallingAssembly();
 
             // Get the assembly and confirm we can do our work
             Type t = a.GetType(a.GetName().Name + "." + classname);
@@ -140,6 +141,14 @@ namespace CommandWrapLib
         /// <returns>0 if successful, -1 if a syntax error was shown.</returns>
         private static int ShowHelp(string syntax_error_message, MethodInfo m)
         {
+            // Is it possible to get some documentation?
+            XmlElement documentation = null;
+            try {
+                documentation = DocsByReflection.XMLFromMember(m);
+            } catch {
+                System.Diagnostics.Debug.WriteLine("XML Help is not available.  Please compile your program with XML documentation turned on if you wish to use XML documentation.");
+            }
+ 
             // Show help
             if (!String.IsNullOrEmpty(syntax_error_message)) {
                 Console.WriteLine("SYNTAX ERROR:");
@@ -147,12 +156,18 @@ namespace CommandWrapLib
                 Console.WriteLine();
             }
 
-            // Get all Copyright attributes on this assembly
+            // Gather copyright and various details
             var ta = (from object a in Assembly.GetExecutingAssembly().GetCustomAttributes(typeof(AssemblyTitleAttribute), false) select a).First();
             string title = ta == null ? System.AppDomain.CurrentDomain.FriendlyName : ((AssemblyTitleAttribute)ta).Title;
             var ca = (from object a in Assembly.GetExecutingAssembly().GetCustomAttributes(typeof(AssemblyCopyrightAttribute), false) select a).First();
-            string copyright = ca == null ? "" : ((AssemblyCopyrightAttribute)ca).Copyright + "\n";
+            string copyright = ca == null ? "" : ((AssemblyCopyrightAttribute)ca).Copyright.Replace("©", "(C)") + "\n";
+
+            // Show copyright
             Console.WriteLine("{0}\n{1}", title, copyright);
+            if (documentation != null) {
+                Console.WriteLine(documentation["summary"].InnerText.Trim());
+                Console.WriteLine();
+            }
 
             // Show the definition of the function
             Console.WriteLine("USAGE:");
@@ -168,6 +183,14 @@ namespace CommandWrapLib
                     Console.WriteLine("    [--{0}={1}] (optional)", pi.Name, pi.ParameterType);
                 } else {
                     Console.WriteLine("    --{0}={1}", pi.Name, pi.ParameterType);
+                }
+
+                // Show help for the parameters, if they are available
+                if (documentation != null) {
+                    XmlNode el = documentation.SelectSingleNode("//param[@name=\"" + pi.Name + "\"]");
+                    if (el != null) {
+                        Console.WriteLine("        " + el.InnerText);
+                    }
                 }
             }
 
