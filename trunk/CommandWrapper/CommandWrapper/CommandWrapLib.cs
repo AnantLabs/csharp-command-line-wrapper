@@ -21,7 +21,7 @@ using System.Reflection;
 using System.Xml;
 using System.IO;
 
-public class CommandWrapLib
+public static class CommandWrapLib
 {
     #region Public interface for a command line execution of an arbitrary function
     /// <summary>
@@ -185,14 +185,20 @@ public class CommandWrapLib
             Console.WriteLine();
         }
 
-        // Gather copyright and various details
-        var ta = (from object attr in a.GetCustomAttributes(typeof(AssemblyTitleAttribute), false) select attr).First();
-        string title = ta == null ? System.AppDomain.CurrentDomain.FriendlyName : ((AssemblyTitleAttribute)ta).Title;
-        var ca = (from object attr in a.GetCustomAttributes(typeof(AssemblyCopyrightAttribute), false) select attr).First();
-        string copyright = ca == null ? "" : ((AssemblyCopyrightAttribute)ca).Copyright.Replace("©", "(C)") + "\n";
+        // Get the application's title (or executable name)
+        var v = a.GetMetadata<AssemblyTitleAttribute>();
+        string title = v == null ? System.AppDomain.CurrentDomain.FriendlyName : v.Title;
+
+        // Get the application's copyright (or blank)
+        var ca = a.GetMetadata<AssemblyCopyrightAttribute>();
+        string copyright = ca == null ? "" : ca.Copyright.Replace("©", "(C)");
+
+        // Get the application's version
+        var ver = a.GetMetadata<AssemblyVersionAttribute>();
+        string version = ver == null ? "" : ver.Version;
 
         // Show copyright
-        Console.WriteLine("{0}\n{1}", title, copyright);
+        Console.WriteLine("{0} {1}\n{2}", title, version, copyright);
         if (documentation != null) {
             Console.WriteLine(documentation["summary"].InnerText.Trim());
             Console.WriteLine();
@@ -229,6 +235,17 @@ public class CommandWrapLib
         } else {
             return 0;
         }
+    }
+
+    /// <summary>
+    /// Ability to return assembly information as simply as possible
+    /// </summary>
+    /// <typeparam name="T"></typeparam>
+    /// <param name="a"></param>
+    /// <returns></returns>
+    public static T GetMetadata<T>(this Assembly a)
+    {
+        return (T)(from object attr in a.GetCustomAttributes(typeof(T), false) select attr).First();
     }
     #endregion
 
