@@ -39,6 +39,7 @@ namespace CommandWrapper
             // Okay, let's attempt to parse this
             string[] breakdown = args[1].Split('.');
             if (breakdown.Length == 2) {
+                CommandWrapLib
             } else if (breakdown.Length == 3) {
             } else {
                 Console.WriteLine("Please specify the function to execute as either 'assembly.class.func' or 'class.func'.");
