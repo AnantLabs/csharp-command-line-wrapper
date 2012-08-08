@@ -177,7 +177,7 @@ public static class CommandWrapLib
         } catch {
             System.Diagnostics.Debug.WriteLine("XML Help is not available.  Please compile your program with XML documentation turned on if you wish to use XML documentation.");
         }
- 
+
         // Show help
         if (!String.IsNullOrEmpty(syntax_error_message)) {
             Console.WriteLine("SYNTAX ERROR:");
@@ -194,7 +194,7 @@ public static class CommandWrapLib
         string copyright = ca == null ? "" : ca.Copyright.Replace("©", "(C)");
 
         // Get the application's version
-        var ver = a.GetMetadata<AssemblyVersionAttribute>();
+        var ver = a.GetMetadata<AssemblyFileVersionAttribute>();
         string version = ver == null ? "" : ver.Version;
 
         // Show copyright
@@ -245,7 +245,7 @@ public static class CommandWrapLib
     /// <returns></returns>
     public static T GetMetadata<T>(this Assembly a)
     {
-        return (T)(from object attr in a.GetCustomAttributes(typeof(T), false) select attr).First();
+        return (T)(from object attr in a.GetCustomAttributes(typeof(T), false) select attr).FirstOrDefault();
     }
     #endregion
 
