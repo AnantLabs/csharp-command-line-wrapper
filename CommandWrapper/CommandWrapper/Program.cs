@@ -39,8 +39,18 @@ namespace CommandWrapper
             // Okay, let's attempt to parse this
             string[] breakdown = args[1].Split('.');
             if (breakdown.Length == 2) {
-                CommandWrapLib
+                CommandWrapLib.ConsoleWrapper(a, breakdown[0], breakdown[1], args.Skip(2).ToArray());
+
+            // Find the assembly specified by the caller
             } else if (breakdown.Length == 3) {
+                string classid = breakdown[0] + "." + breakdown[1];
+                Assembly found = Assembly.GetAssembly(Type.GetType(classid));
+                if (found == null) {
+                    Console.WriteLine("Class {0} wasn't found in the loaded assemblies.", classid);
+                    ShowHelp();
+                    return;
+                }
+                CommandWrapLib.ConsoleWrapper(a, breakdown[0], breakdown[1], args.Skip(3).ToArray());
             } else {
                 Console.WriteLine("Please specify the function to execute as either 'assembly.class.func' or 'class.func'.");
                 ShowHelp();
