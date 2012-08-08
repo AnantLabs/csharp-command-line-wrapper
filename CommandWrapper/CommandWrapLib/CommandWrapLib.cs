@@ -54,13 +54,13 @@ namespace CommandWrapLib
                     String.Equals(args[0], "--help", StringComparison.CurrentCultureIgnoreCase) ||
                     String.Equals(args[0], "/h", StringComparison.CurrentCultureIgnoreCase) ||
                     String.Equals(args[0], "/help", StringComparison.CurrentCultureIgnoreCase)) {
-                    return ShowHelp(null, m);
+                    return ShowHelp(null, a, m);
                 }
             }
 
             // If the user just executed the program without specifying any parameters
             if (args.Length == 0 && any_params_required) {
-                return ShowHelp(null, m);
+                return ShowHelp(null, a, m);
             }
 
             // Populate all the parameters from the arglist
@@ -76,7 +76,7 @@ namespace CommandWrapLib
                 } else {
                     paramname = args[i];
                     if (i == args.Length - 1) {
-                        return ShowHelp(String.Format("Missing value for {0}.", paramname), m);
+                        return ShowHelp(String.Format("Missing value for {0}.", paramname), a, m);
                     }
                     i++;
                     paramstr = args[i];
@@ -92,7 +92,7 @@ namespace CommandWrapLib
                 // Figure out what parameter this corresponds to
                 var v = (from ParameterInfo pi in pilist where String.Equals(pi.Name, paramname, StringComparison.CurrentCultureIgnoreCase) select pi).FirstOrDefault();
                 if (v == null) {
-                    return ShowHelp(String.Format("Unrecognized option {0}", args[i]), m);
+                    return ShowHelp(String.Format("Unrecognized option {0}", args[i]), a, m);
                 }
 
                 // Figure out its position in the call params
@@ -132,10 +132,10 @@ namespace CommandWrapLib
                     } else if (v.ParameterType == typeof(DateTime)) {
                         thisparam = DateTime.Parse(paramstr);
                     } else {
-                        return ShowHelp(String.Format("Unsupported type {0} - only basic value types can be parsed from the command line.", v.ParameterType.FullName), m);
+                        return ShowHelp(String.Format("Unsupported type {0} - only basic value types can be parsed from the command line.", v.ParameterType.FullName), a, m);
                     }
                 } catch {
-                    return ShowHelp(String.Format("The value {0} is not valid for {1} - required '{2}'", paramstr, args[i], v.ParameterType.FullName), m);
+                    return ShowHelp(String.Format("The value {0} is not valid for {1} - required '{2}'", paramstr, args[i], v.ParameterType.FullName), a, m);
                 }
 
                 // Did we fail to get a parameter?
@@ -148,7 +148,7 @@ namespace CommandWrapLib
             // Ensure all mandatory parameters are filled in
             for (int i = 0; i < pilist.Length; i++) {
                 if (!pilist[i].IsOptional && (callparams[i] == null)) {
-                    return ShowHelp(String.Format("Missing required parameter {0}", pilist[i].Name), m);
+                    return ShowHelp(String.Format("Missing required parameter {0}", pilist[i].Name), a, m);
                 }
             }
 
@@ -168,7 +168,7 @@ namespace CommandWrapLib
         /// <param name="syntax_error_message">Provide feedback on a user error</param>
         /// <param name="m">The method we should provide usage information for.</param>
         /// <returns>0 if successful, -1 if a syntax error was shown.</returns>
-        private static int ShowHelp(string syntax_error_message, MethodInfo m)
+        private static int ShowHelp(string syntax_error_message, Assembly a, MethodInfo m)
         {
             // Is it possible to get some documentation?
             XmlElement documentation = null;
@@ -186,9 +186,9 @@ namespace CommandWrapLib
             }
 
             // Gather copyright and various details
-            var ta = (from object a in Assembly.GetExecutingAssembly().GetCustomAttributes(typeof(AssemblyTitleAttribute), false) select a).First();
+            var ta = (from object attr in a.GetCustomAttributes(typeof(AssemblyTitleAttribute), false) select attr).First();
             string title = ta == null ? System.AppDomain.CurrentDomain.FriendlyName : ((AssemblyTitleAttribute)ta).Title;
-            var ca = (from object a in Assembly.GetExecutingAssembly().GetCustomAttributes(typeof(AssemblyCopyrightAttribute), false) select a).First();
+            var ca = (from object attr in a.GetCustomAttributes(typeof(AssemblyCopyrightAttribute), false) select attr).First();
             string copyright = ca == null ? "" : ((AssemblyCopyrightAttribute)ca).Copyright.Replace("©", "(C)") + "\n";
 
             // Show copyright
