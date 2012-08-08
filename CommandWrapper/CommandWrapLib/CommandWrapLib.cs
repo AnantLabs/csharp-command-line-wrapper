@@ -103,16 +103,36 @@ namespace CommandWrapLib
                 try {
                     if (v.ParameterType == typeof(string)) {
                         thisparam = paramstr;
-                    } else if (v.ParameterType == typeof(char)) {
-                        thisparam = paramstr[0];
+                    } else if (v.ParameterType == typeof(bool)) {
+                        thisparam = Boolean.Parse(paramstr);
+                    } else if (v.ParameterType == typeof(byte)) {
+                        thisparam = Byte.Parse(paramstr);
+                    } else if (v.ParameterType == typeof(sbyte)) {
+                        thisparam = SByte.Parse(paramstr);
+                    } else if (v.ParameterType == typeof(short)) {
+                        thisparam = Int16.Parse(paramstr);
+                    } else if (v.ParameterType == typeof(ushort)) {
+                        thisparam = UInt16.Parse(paramstr);
                     } else if (v.ParameterType == typeof(int)) {
                         thisparam = Int32.Parse(paramstr);
+                    } else if (v.ParameterType == typeof(uint)) {
+                        thisparam = UInt32.Parse(paramstr);
                     } else if (v.ParameterType == typeof(long)) {
                         thisparam = Int64.Parse(paramstr);
+                    } else if (v.ParameterType == typeof(ulong)) {
+                        thisparam = UInt64.Parse(paramstr);
+                    } else if (v.ParameterType == typeof(float)) {
+                        thisparam = Single.Parse(paramstr);
+                    } else if (v.ParameterType == typeof(double)) {
+                        thisparam = Double.Parse(paramstr);
+                    } else if (v.ParameterType == typeof(decimal)) {
+                        thisparam = Decimal.Parse(paramstr);
+                    } else if (v.ParameterType == typeof(char)) {
+                        thisparam = paramstr[0];
                     } else if (v.ParameterType == typeof(DateTime)) {
                         thisparam = DateTime.Parse(paramstr);
                     } else {
-                        return ShowHelp(String.Format("Unsupported type {0}", v.ParameterType.FullName), m);
+                        return ShowHelp(String.Format("Unsupported type {0} - only basic value types can be parsed from the command line.", v.ParameterType.FullName), m);
                     }
                 } catch {
                     return ShowHelp(String.Format("The value {0} is not valid for {1} - required '{2}'", paramstr, args[i], v.ParameterType.FullName), m);
