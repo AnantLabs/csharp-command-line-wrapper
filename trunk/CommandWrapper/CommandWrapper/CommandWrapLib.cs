@@ -41,12 +41,15 @@ public static class CommandWrapLib
         if (t == null) {
             throw new Exception(String.Format("Class {0} does not exist within assembly {1}.", classname, a.FullName));
         }
-        MethodInfo m = (from MethodInfo mi in t.GetMethods() where mi.Name == staticfunctionname && mi.IsStatic select mi).First();
-        if (m == null) {
+
+        // Okay, let's find a potential list of methods that could fit our needs and see if any of them work
+        var methods = (from MethodInfo mi in t.GetMethods() where mi.Name == staticfunctionname && mi.IsStatic orderby mi.GetParameters().Count() descending select mi);
+        if (methods == null || methods.Count() == 0) {
             throw new Exception(String.Format("No static method named {0} was found in class {1}.", staticfunctionname, classname));
         }
-        ParameterInfo[] pilist = m.GetParameters();
-        bool any_params_required = (from ParameterInfo pi in pilist where pi.IsOptional == false select pi).Any();
+
+        // For thoroughness, let's pick which method is the biggest one
+        var biggest_method = (from MethodInfo mi in methods select mi).First();
 
         // If no arguments, or if help is requested, show help
         if (args.Length == 1) {
@@ -54,13 +57,39 @@ public static class CommandWrapLib
                 String.Equals(args[0], "--help", StringComparison.CurrentCultureIgnoreCase) ||
                 String.Equals(args[0], "/h", StringComparison.CurrentCultureIgnoreCase) ||
                 String.Equals(args[0], "/help", StringComparison.CurrentCultureIgnoreCase)) {
-                return ShowHelp(null, a, m);
+                return ShowHelp(null, a, biggest_method);
             }
         }
 
+        // Attempt each potential method that matches the signature; if any one succeeds, done!
+        foreach (var method in methods) {
+            if (TryMethod(a, method, args, false)) {
+                return 0;
+            }
+        }
+
+        // Okay, we couldn't succeed according to any of the methods.  Let's pick the one with the most parameters and show help for it
+        TryMethod(a, biggest_method, args, true);
+        return -1;
+    }
+
+    /// <summary>
+    /// Inner helper function that attempts to make our parameters match a specific method
+    /// </summary>
+    /// <param name="a"></param>
+    /// <param name="m"></param>
+    /// <param name="args"></param>
+    /// <param name="show_help_on_failure"></param>
+    /// <returns></returns>
+    private static bool TryMethod(Assembly a, MethodInfo m, string[] args, bool show_help_on_failure)
+    {
+        ParameterInfo[] pilist = m.GetParameters();
+        bool any_params_required = (from ParameterInfo pi in pilist where pi.IsOptional == false select pi).Any();
+
         // If the user just executed the program without specifying any parameters
         if (args.Length == 0 && any_params_required) {
-            return ShowHelp(null, a, m);
+            if (show_help_on_failure) ShowHelp(null, a, m);
+            return false;
         }
 
         // Populate all the parameters from the arglist
@@ -76,7 +105,8 @@ public static class CommandWrapLib
             } else {
                 paramname = args[i];
                 if (i == args.Length - 1) {
-                    return ShowHelp(String.Format("Missing value for {0}.", paramname), a, m);
+                    if (show_help_on_failure) ShowHelp(String.Format("Missing value for {0}.", paramname), a, m);
+                    return false;
                 }
                 i++;
                 paramstr = args[i];
@@ -92,7 +122,8 @@ public static class CommandWrapLib
             // Figure out what parameter this corresponds to
             var v = (from ParameterInfo pi in pilist where String.Equals(pi.Name, paramname, StringComparison.CurrentCultureIgnoreCase) select pi).FirstOrDefault();
             if (v == null) {
-                return ShowHelp(String.Format("Unrecognized option {0}", args[i]), a, m);
+                if (show_help_on_failure) ShowHelp(String.Format("Unrecognized option {0}", args[i]), a, m);
+                return false;
             }
 
             // Figure out its position in the call params
@@ -132,10 +163,12 @@ public static class CommandWrapLib
                 } else if (v.ParameterType == typeof(DateTime)) {
                     thisparam = DateTime.Parse(paramstr);
                 } else {
-                    return ShowHelp(String.Format("Unsupported type {0} - only basic value types can be parsed from the command line.", v.ParameterType.FullName), a, m);
+                    if (show_help_on_failure) ShowHelp(String.Format("Unsupported type {0} - only basic value types can be parsed from the command line.", v.ParameterType.FullName), a, m);
+                    return false;
                 }
             } catch {
-                return ShowHelp(String.Format("The value {0} is not valid for {1} - required '{2}'", paramstr, args[i], v.ParameterType.FullName), a, m);
+                if (show_help_on_failure) ShowHelp(String.Format("The value {0} is not valid for {1} - required '{2}'", paramstr, args[i], v.ParameterType.FullName), a, m);
+                return false;
             }
 
             // Did we fail to get a parameter?
@@ -148,7 +181,8 @@ public static class CommandWrapLib
         // Ensure all mandatory parameters are filled in
         for (int i = 0; i < pilist.Length; i++) {
             if (!pilist[i].IsOptional && (callparams[i] == null)) {
-                return ShowHelp(String.Format("Missing required parameter {0}", pilist[i].Name), a, m);
+                if (show_help_on_failure) ShowHelp(String.Format("Missing required parameter {0}", pilist[i].Name), a, m);
+                return false;
             }
         }
 
@@ -157,7 +191,7 @@ public static class CommandWrapLib
         if (result != null) {
             Console.WriteLine("RESULT: " + result.ToString());
         }
-        return 0;
+        return true;
     }
     #endregion
 
