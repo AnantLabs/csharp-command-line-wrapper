@@ -36,8 +36,15 @@ public static class CommandWrapLib
         // Interpret "no assembly" as "currently executing assembly"
         if (a == null) a = Assembly.GetCallingAssembly();
 
-        // Get the assembly and confirm we can do our work
-        Type t = a.GetType(a.GetName().Name + "." + classname);
+        // Get the assembly and search through types - note that we're using a search through the array rather than "GetType" since in some cases the assembly
+        // name can be munged in ways that are unpredictable
+        Type t = null;
+        foreach (Type atype in a.GetTypes()) {
+            if (String.Equals(atype.Name, classname)) {
+                t = atype;
+                break;
+            }
+        }
         if (t == null) {
             throw new Exception(String.Format("Class {0} does not exist within assembly {1}.", classname, a.FullName));
         }
