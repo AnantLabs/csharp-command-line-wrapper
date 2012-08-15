@@ -193,11 +193,20 @@ public static class CommandWrapLib
             }
         }
 
-        // Execute this call and display the result (if any)
-        object result = m.Invoke(null, callparams);
-        if (result != null) {
-            Console.WriteLine("RESULT: " + result.ToString());
+        // Execute this call and display the result (if any), plus its type
+        DateTime start_time = DateTime.Now;
+        object result = null;
+        try {
+            m.Invoke(null, callparams);
+            if (result != null) {
+                Console.WriteLine("RESULT: {0} ({1})", result, result.GetType());
+            }
+
+        // Show some useful diagnostics
+        } catch (Exception ex) {
+            Console.WriteLine("EXCEPTION: " + ex.ToString());
         }
+        Console.WriteLine("DURATION: {0}", DateTime.Now - start_time);
         return true;
     }
     #endregion
