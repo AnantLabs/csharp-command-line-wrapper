@@ -139,38 +139,10 @@ public static class CommandWrapLib
 
             // Attempt to parse this parameter
             try {
-                if (v.ParameterType == typeof(string)) {
-                    thisparam = paramstr;
-                } else if (v.ParameterType == typeof(bool)) {
-                    thisparam = Boolean.Parse(paramstr);
-                } else if (v.ParameterType == typeof(byte)) {
-                    thisparam = Byte.Parse(paramstr);
-                } else if (v.ParameterType == typeof(sbyte)) {
-                    thisparam = SByte.Parse(paramstr);
-                } else if (v.ParameterType == typeof(short)) {
-                    thisparam = Int16.Parse(paramstr);
-                } else if (v.ParameterType == typeof(ushort)) {
-                    thisparam = UInt16.Parse(paramstr);
-                } else if (v.ParameterType == typeof(int)) {
-                    thisparam = Int32.Parse(paramstr);
-                } else if (v.ParameterType == typeof(uint)) {
-                    thisparam = UInt32.Parse(paramstr);
-                } else if (v.ParameterType == typeof(long)) {
-                    thisparam = Int64.Parse(paramstr);
-                } else if (v.ParameterType == typeof(ulong)) {
-                    thisparam = UInt64.Parse(paramstr);
-                } else if (v.ParameterType == typeof(float)) {
-                    thisparam = Single.Parse(paramstr);
-                } else if (v.ParameterType == typeof(double)) {
-                    thisparam = Double.Parse(paramstr);
-                } else if (v.ParameterType == typeof(decimal)) {
-                    thisparam = Decimal.Parse(paramstr);
-                } else if (v.ParameterType == typeof(char)) {
-                    thisparam = paramstr[0];
-                } else if (v.ParameterType == typeof(DateTime)) {
-                    thisparam = DateTime.Parse(paramstr);
-                } else {
-                    if (show_help_on_failure) ShowHelp(String.Format("Unsupported type {0} - only basic value types can be parsed from the command line.", v.ParameterType.FullName), a, m);
+                try {
+                    thisparam = Convert.ChangeType(paramstr, v.ParameterType);
+                } catch (Exception ex) {
+                    if (show_help_on_failure) ShowHelp(String.Format("Unable to convert '{0}' into type {1}.\n\n{2}\n\n", paramstr, v.ParameterType.FullName, ex.ToString()), a, m);
                     return false;
                 }
             } catch {
