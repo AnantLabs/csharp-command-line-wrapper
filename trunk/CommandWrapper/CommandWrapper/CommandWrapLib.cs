@@ -140,7 +140,11 @@ public static class CommandWrapLib
             // Attempt to parse this parameter
             try {
                 try {
-                    thisparam = Convert.ChangeType(paramstr, v.ParameterType);
+                    if (v.ParameterType == typeof(Guid)) {
+                        thisparam = Guid.Parse(paramstr);
+                    } else {
+                        thisparam = Convert.ChangeType(paramstr, v.ParameterType);
+                    }
                 } catch (Exception ex) {
                     if (show_help_on_failure) ShowHelp(String.Format("Unable to convert '{0}' into type {1}.\n\n{2}\n\n", paramstr, v.ParameterType.FullName, ex.ToString()), a, m);
                     return false;
