@@ -31,6 +31,9 @@ public static class CommandWrapLib
     /// <param name="args"></param>
     public static void Main(string[] args)
     {
+        // Use the main assembly
+        Assembly a = Assembly.GetEntryAssembly();
+
         // Retrieve the name of the function to call
         string[] target = new string[2];
         string[] newargs = null;
@@ -38,11 +41,9 @@ public static class CommandWrapLib
             target = args[0].Split('.');
 
             // Remove this argument from the list
-            newargs = args.ToList().GetRange(1, args.Length - 1).ToArray();
+            ConsoleWrapper(a, target[0], target[1], args.Skip(1).ToArray());
+            return;
         }
-
-        // Use the main assembly
-        Assembly a = Assembly.GetEntryAssembly();
 
         // Can we find the type and method?
         List<string> all_possible_calls = new List<string>();
@@ -375,7 +376,11 @@ public static class CommandWrapLib
         }
 
         // Return an appropriate error code for the application
-        return ShowHelp(syntax_error_message, a, documentation["summary"].InnerText, advice.ToString());
+        string summary = null;
+        if (documentation != null) {
+            summary = documentation["summary"].InnerText;
+        }
+        return ShowHelp(syntax_error_message, a, summary, advice.ToString());
     }
 
     /// <summary>
