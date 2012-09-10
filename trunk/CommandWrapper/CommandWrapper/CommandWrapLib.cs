@@ -20,9 +20,82 @@ using System.Text;
 using System.Reflection;
 using System.Xml;
 using System.IO;
+using System.ComponentModel;
 
 public static class CommandWrapLib
 {
+    #region Generic public interface for wrapping an arbitrary number of functions
+    /// <summary>
+    /// Looks through the list of public static interfaces and offers a choice of functions to call
+    /// </summary>
+    /// <param name="args"></param>
+    public static void Main(string[] args)
+    {
+        // Retrieve the name of the function to call
+        string[] target = new string[2];
+        string[] newargs = null;
+        if (args.Length > 0) {
+            target = args[0].Split('.');
+
+            // Remove this argument from the list
+            newargs = args.ToList().GetRange(1, args.Length - 1).ToArray();
+        }
+
+        // Use the main assembly
+        Assembly a = Assembly.GetEntryAssembly();
+
+        // Can we find the type and method?
+        List<string> all_possible_calls = new List<string>();
+        List<string> wrapped_calls = new List<string>();
+        foreach (Type atype in a.GetTypes()) {
+            if (atype == typeof(CommandWrapLib)) continue;
+
+            // Iterate through all static methods and try them
+            var methods = (from MethodInfo mi in atype.GetMethods() where mi.IsStatic orderby mi.GetParameters().Count() descending select mi);
+            if (methods != null && methods.Count() > 0) {
+                foreach (MethodInfo mi in methods) {
+
+                    // Does this method work?
+                    if (String.Equals(atype.Name, target[0]) && String.Equals(mi.Name, target[1])) {
+                        if (TryMethod(a, mi, newargs, false)) {
+                            return;
+                        }
+                    }
+
+                    // Is this "wrapped" or just "possible?"
+                    string call = atype.Name + "." + mi.Name;
+                    all_possible_calls.Add(call);
+                    foreach (Attribute attr in mi.GetCustomAttributes(true)) {
+                        if (attr is Wrap) {
+                            wrapped_calls.Add(call);
+                        }
+                    }
+                }
+            }
+        }
+
+        // We didn't find a valid call - notify the user of all the possibilities.
+        if (wrapped_calls.Count == 0) {
+            System.Diagnostics.Debug.WriteLine("You did not apply the [Wrap] attribute to any functions.  I will show all possible static functions within this assembly.  To filter the list of options down, please apply the [Wrap] attribute to the functions you wish to be callable from the command line.");
+            wrapped_calls = all_possible_calls;
+        } 
+        
+        // There was only one wrapped call - assume we're calling that!
+        if (wrapped_calls.Count == 1) {
+            target = wrapped_calls[0].Split('.');
+            ConsoleWrapper(a, target[0], target[1], args);
+            return;
+        }
+
+        // Show help to give the user the ability to choose between wrapped calls
+        if (args.Length > 0) {
+            ShowHelp(String.Format("Method '{0}' is not recognized.", args[0]), a, wrapped_calls);
+        } else {
+            ShowHelp(null, a, wrapped_calls);
+        }
+    }
+    #endregion
+
     #region Public interface for a command line execution of an arbitrary function
     /// <summary>
     /// Wrap a specific class and function in a console interface library.
@@ -189,28 +262,40 @@ public static class CommandWrapLib
 
     #region Helper Functions
     /// <summary>
-    /// Show the most useful possible command line help
+    /// Show help when there are a variety of possible calls you could make
     /// </summary>
-    /// <param name="syntax_error_message">Provide feedback on a user error</param>
-    /// <param name="m">The method we should provide usage information for.</param>
-    /// <returns>0 if successful, -1 if a syntax error was shown.</returns>
-    private static int ShowHelp(string syntax_error_message, Assembly a, MethodInfo m)
+    /// <param name="syntax_error_message"></param>
+    /// <param name="a"></param>
+    /// <param name="possible_calls"></param>
+    private static int ShowHelp(string syntax_error_message, Assembly a, List<string> possible_calls)
     {
-        // Is it possible to get some documentation?
-        XmlElement documentation = null;
-        try {
-            documentation = XMLFromMember(m);
-        } catch {
-            System.Diagnostics.Debug.WriteLine("XML Help is not available.  Please compile your program with XML documentation turned on if you wish to use XML documentation.");
+        // Build the "advice" section
+        StringBuilder advice = new StringBuilder();
+
+        // Show all possible methods
+        advice.AppendLine("USAGE:");
+        advice.AppendFormat("    {0} [method] [parameters]\n", System.AppDomain.CurrentDomain.FriendlyName);
+        advice.AppendLine();
+
+        // Show all possible methods
+        advice.AppendLine("METHODS:");
+        foreach (string call in possible_calls) {
+            advice.AppendLine("    " + call);
         }
 
-        // Show help
-        if (!String.IsNullOrEmpty(syntax_error_message)) {
-            Console.WriteLine("SYNTAX ERROR:");
-            Console.WriteLine("    " + syntax_error_message);
-            Console.WriteLine();
-        }
+        // Shell to the root function
+        return ShowHelp(syntax_error_message, a, null, advice.ToString());
+    }
 
+    /// <summary>
+    /// Internal help function - presumes "advice" is already known
+    /// </summary>
+    /// <param name="syntax_error_message"></param>
+    /// <param name="a"></param>
+    /// <param name="advice"></param>
+    /// <returns></returns>
+    private static int ShowHelp(string syntax_error_message, Assembly a, string application_summary, string advice)
+    {
         // Get the application's title (or executable name)
         var v = a.GetMetadata<AssemblyTitleAttribute>();
         string title = v == null ? System.AppDomain.CurrentDomain.FriendlyName : v.Title;
@@ -225,42 +310,72 @@ public static class CommandWrapLib
 
         // Show copyright
         Console.WriteLine("{0} {1}\n{2}", title, version, copyright);
-        if (documentation != null) {
-            Console.WriteLine(documentation["summary"].InnerText.Trim());
+        if (application_summary != null) {
+            Console.WriteLine(application_summary);
             Console.WriteLine();
         }
 
-        // Show the definition of the function
-        Console.WriteLine("USAGE:");
-        Console.Write("    ");
-        Console.Write(System.AppDomain.CurrentDomain.FriendlyName);
-        Console.WriteLine(" [parameters]");
+        // Show advice
         Console.WriteLine();
+        Console.Write(advice);
+
+        // Show help
+        if (!String.IsNullOrEmpty(syntax_error_message)) {
+            Console.WriteLine();
+            Console.WriteLine("SYNTAX ERROR:");
+            Console.WriteLine("    " + syntax_error_message);
+        }
+
+        // Return a failure code (-1) if there was a syntax issue
+        return String.IsNullOrEmpty(syntax_error_message) ? 0 : -1;
+    }
+
+    /// <summary>
+    /// Show the most useful possible command line help
+    /// </summary>
+    /// <param name="syntax_error_message">Provide feedback on a user error</param>
+    /// <param name="m">The method we should provide usage information for.</param>
+    /// <returns>0 if successful, -1 if a syntax error was shown.</returns>
+    private static int ShowHelp(string syntax_error_message, Assembly a, MethodInfo m)
+    {
+        ParameterInfo[] plist = m.GetParameters();
+        StringBuilder advice = new StringBuilder();
+
+        // Is it possible to get some documentation?
+        XmlElement documentation = null;
+        try {
+            documentation = XMLFromMember(m);
+        } catch {
+            System.Diagnostics.Debug.WriteLine("XML Help is not available.  Please compile your program with XML documentation turned on if you wish to use XML documentation.");
+        }
+
+        // Show the definition of the function
+        advice.AppendLine("USAGE:");
+        advice.AppendFormat("    {0} {1}\n", System.AppDomain.CurrentDomain.FriendlyName, plist.Length > 0 ? "[parameters]" : "");
+        advice.AppendLine();
 
         // Show full definition of parameters
-        Console.WriteLine("PARAMETERS:");
-        foreach (ParameterInfo pi in m.GetParameters()) {
-            if (pi.IsOptional) {
-                Console.WriteLine("    [--{0}={1}] (optional)", pi.Name, pi.ParameterType);
-            } else {
-                Console.WriteLine("    --{0}={1}", pi.Name, pi.ParameterType);
-            }
+        if (plist.Length > 0) {
+            advice.AppendLine("PARAMETERS:");
+            foreach (ParameterInfo pi in m.GetParameters()) {
+                if (pi.IsOptional) {
+                    advice.AppendFormat("    [--{0}={1}] (optional)\n", pi.Name, pi.ParameterType);
+                } else {
+                    advice.AppendFormat("    --{0}={1}\n", pi.Name, pi.ParameterType);
+                }
 
-            // Show help for the parameters, if they are available
-            if (documentation != null) {
-                XmlNode el = documentation.SelectSingleNode("//param[@name=\"" + pi.Name + "\"]");
-                if (el != null) {
-                    Console.WriteLine("        " + el.InnerText);
+                // Show help for the parameters, if they are available
+                if (documentation != null) {
+                    XmlNode el = documentation.SelectSingleNode("//param[@name=\"" + pi.Name + "\"]");
+                    if (el != null) {
+                        advice.AppendFormat("        {0}", el.InnerText);
+                    }
                 }
             }
         }
 
         // Return an appropriate error code for the application
-        if (syntax_error_message != null) {
-            return -1;
-        } else {
-            return 0;
-        }
+        return ShowHelp(syntax_error_message, a, documentation["summary"].InnerText, advice.ToString());
     }
 
     /// <summary>
@@ -428,3 +543,11 @@ public static class CommandWrapLib
     }
     #endregion
 }
+
+/// <summary>
+/// This is a tag you can use to specify which functions should be wrapped
+/// </summary>
+public class Wrap : Attribute
+{
+}
+
