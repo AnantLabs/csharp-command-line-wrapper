@@ -22,6 +22,9 @@ using System.Xml;
 using System.IO;
 using System.ComponentModel;
 
+/// <summary>
+/// This is the command wrap class - it does not have a namespace definition to prevent complications if you "drop it" directly into an existing project.
+/// </summary>
 public static class CommandWrapLib
 {
     #region Generic public interface for wrapping an arbitrary number of functions
@@ -311,13 +314,13 @@ public static class CommandWrapLib
 
         // Show copyright
         Console.WriteLine("{0} {1}\n{2}", title, version, copyright);
+        Console.WriteLine();
         if (application_summary != null) {
-            Console.WriteLine(application_summary);
+            Console.WriteLine(application_summary.Trim());
             Console.WriteLine();
         }
 
         // Show advice
-        Console.WriteLine();
         Console.Write(advice);
 
         // Show help
@@ -369,7 +372,7 @@ public static class CommandWrapLib
                 if (documentation != null) {
                     XmlNode el = documentation.SelectSingleNode("//param[@name=\"" + pi.Name + "\"]");
                     if (el != null) {
-                        advice.AppendFormat("        {0}", el.InnerText);
+                        advice.AppendFormat("        {0}\n", el.InnerText);
                     }
                 }
             }
@@ -465,13 +468,16 @@ public static class CommandWrapLib
 
         XmlElement matchedElement = null;
 
-        foreach (XmlElement xmlElement in xmlDocument["doc"]["members"]) {
-            if (xmlElement.Attributes["name"].Value.Equals(fullName)) {
-                if (matchedElement != null) {
-                    throw new Exception("Multiple matches to query");
-                }
+        foreach (XmlNode xmlNode in xmlDocument["doc"]["members"]) {
+            if (xmlNode is XmlElement) {
+                XmlElement el = xmlNode as XmlElement;
+                if (el.Attributes["name"].Value.Equals(fullName)) {
+                    if (matchedElement != null) {
+                        throw new Exception("Multiple matches to query");
+                    }
 
-                matchedElement = xmlElement;
+                    matchedElement = el as XmlElement;
+                }
             }
         }
 

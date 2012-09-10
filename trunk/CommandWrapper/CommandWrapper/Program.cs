@@ -17,12 +17,12 @@ namespace CommandWrapper
         /// <summary>
         /// Launch an external DLL file and call a specific static method on a class within that assembly.
         /// </summary>
-        /// <param name="DllName">The file & path to the DLL.</param>
+        /// <param name="DllName">The file &amp; path to the DLL.</param>
         /// <param name="Class">The class name to execute.</param>
         /// <param name="Method">The method name to execute.  Must be static.</param>
         /// <param name="args">Comma-separated list of arguments.</param>
         [Wrap]
-        public static void WrapOutsideAssembly(string DllName, string Class = null, string Method = null, string args = null)
+        public static void WrapOutsideAssembly(string DllName, string Class, string Method, string args = null)
         {
             // Interpret parameter 0 as the {assembly}.{class}.{method}
             if (!File.Exists(DllName)) {
@@ -44,6 +44,9 @@ namespace CommandWrapper
             }
         }
 
+        /// <summary>
+        /// Display useful help guidelines
+        /// </summary>
         private static void ShowHelp()
         {
             Console.WriteLine("CommandWrapper");
