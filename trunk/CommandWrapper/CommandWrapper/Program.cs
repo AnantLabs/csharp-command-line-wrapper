@@ -14,47 +14,33 @@ namespace CommandWrapper
 {
     class Program
     {
-        static void Main(string[] args)
+        /// <summary>
+        /// Launch an external DLL file and call a specific static method on a class within that assembly.
+        /// </summary>
+        /// <param name="DllName">The file & path to the DLL.</param>
+        /// <param name="Class">The class name to execute.</param>
+        /// <param name="Method">The method name to execute.  Must be static.</param>
+        /// <param name="args">Comma-separated list of arguments.</param>
+        [Wrap]
+        public static void WrapOutsideAssembly(string DllName, string Class = null, string Method = null, string args = null)
         {
-            // Show help if no parameters specified
-            if (args.Length == 0) {
-                ShowHelp();
-                return;
-            }
-
             // Interpret parameter 0 as the {assembly}.{class}.{method}
-            string dll = args[0];
-            if (!File.Exists(dll)) {
-                Console.WriteLine("Unable to find file: " + dll);
+            if (!File.Exists(DllName)) {
+                Console.WriteLine("Unable to find file: " + DllName);
                 ShowHelp();
                 return;
             }
-            Assembly a = Assembly.LoadFrom(dll);
+            Assembly a = Assembly.LoadFrom(DllName);
             if (a == null) {
-                Console.WriteLine("Unable to load assembly from file: " + dll);
+                Console.WriteLine("Unable to load assembly from file: " + DllName);
                 ShowHelp();
                 return;
             }
 
             // Okay, let's attempt to parse this
-            string[] breakdown = args[1].Split('.');
-            if (breakdown.Length == 2) {
-                CommandWrapLib.ConsoleWrapper(a, breakdown[0], breakdown[1], args.Skip(2).ToArray());
-
-            // Find the assembly specified by the caller
-            } else if (breakdown.Length == 3) {
-                string classid = breakdown[0] + "." + breakdown[1];
-                Assembly found = Assembly.GetAssembly(Type.GetType(classid));
-                if (found == null) {
-                    Console.WriteLine("Class {0} wasn't found in the loaded assemblies.", classid);
-                    ShowHelp();
-                    return;
-                }
-                CommandWrapLib.ConsoleWrapper(a, breakdown[0], breakdown[1], args.Skip(3).ToArray());
+            if (Class == null || Method == null) {
             } else {
-                Console.WriteLine("Please specify the function to execute as either 'assembly.class.func' or 'class.func'.");
-                ShowHelp();
-                return;
+                CommandWrapLib.ConsoleWrapper(a, Class, Method, args.Split(','));
             }
         }
 
