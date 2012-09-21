@@ -37,20 +37,9 @@ public static class CommandWrapLib
         // Use the main assembly
         Assembly a = Assembly.GetEntryAssembly();
 
-        // Retrieve the name of the function to call
-        string[] target = new string[2];
-        string[] newargs = null;
-        if (args.Length > 0) {
-            target = args[0].Split('.');
-
-            // Remove this argument from the list
-            ConsoleWrapper(a, target[0], target[1], args.Skip(1).ToArray());
-            return;
-        }
-
         // Can we find the type and method?
-        List<string> all_possible_calls = new List<string>();
-        List<string> wrapped_calls = new List<string>();
+        Dictionary<string, MatchingMethods> wrapped_calls = new Dictionary<string, MatchingMethods>();
+        Dictionary<string, MatchingMethods> all_calls = new Dictionary<string, MatchingMethods>();
         foreach (Type atype in a.GetTypes()) {
             if (atype == typeof(CommandWrapLib)) continue;
 
@@ -59,20 +48,31 @@ public static class CommandWrapLib
             if (methods != null && methods.Count() > 0) {
                 foreach (MethodInfo mi in methods) {
 
-                    // Does this method work?
-                    if (String.Equals(atype.Name, target[0]) && String.Equals(mi.Name, target[1])) {
-                        if (TryMethod(a, mi, newargs, false)) {
-                            return;
+                    // Retrieve the call and wrap names
+                    string call = atype.Name + "." + mi.Name;
+                    bool is_wrapped = false;
+                    string wrap = null;
+                    foreach (Attribute attr in mi.GetCustomAttributes(true)) {
+                        if (attr is Wrap) {
+                            is_wrapped = true;
+                            wrap = ((Wrap)attr).Name;
+                            if (String.IsNullOrEmpty(wrap)) wrap = call;
                         }
                     }
 
-                    // Is this "wrapped" or just "possible?"
-                    string call = atype.Name + "." + mi.Name;
-                    all_possible_calls.Add(call);
-                    foreach (Attribute attr in mi.GetCustomAttributes(true)) {
-                        if (attr is Wrap) {
-                            wrapped_calls.Add(call);
-                        }
+                    // Record this function in the "all static calls" list
+                    MatchingMethods mm = null;
+                    all_calls.TryGetValue(call, out mm);
+                    if (mm == null) mm = new MatchingMethods();
+                    mm.Methods.Add(mi);
+                    all_calls[call] = mm;
+
+                    // Record this function in the "wrapped calls" list if appropriate
+                    if (is_wrapped) {
+                        wrapped_calls.TryGetValue(wrap, out mm);
+                        if (mm == null) mm = new MatchingMethods();
+                        mm.Methods.Add(mi);
+                        wrapped_calls[wrap] = mm;
                     }
                 }
             }
@@ -81,21 +81,31 @@ public static class CommandWrapLib
         // We didn't find a valid call - notify the user of all the possibilities.
         if (wrapped_calls.Count == 0) {
             System.Diagnostics.Debug.WriteLine("You did not apply the [Wrap] attribute to any functions.  I will show all possible static functions within this assembly.  To filter the list of options down, please apply the [Wrap] attribute to the functions you wish to be callable from the command line.");
-            wrapped_calls = all_possible_calls;
+            wrapped_calls = all_calls;
         } 
         
         // There was only one wrapped call - assume we're calling that!
         if (wrapped_calls.Count == 1) {
-            target = wrapped_calls[0].Split('.');
-            ConsoleWrapper(a, target[0], target[1], args);
+            TryAllMethods(a, wrapped_calls.Values.ToArray()[0], args);
             return;
         }
 
-        // Show help to give the user the ability to choose between wrapped calls
+        // Did the user provide any arguments?  If so, try to interpret in a way that results in a function call
         if (args.Length > 0) {
-            ShowHelp(String.Format("Method '{0}' is not recognized.", args[0]), a, wrapped_calls);
+
+            // If we have arguments, let's attempt to call the matching one of them
+            MatchingMethods mm = null;
+            if (wrapped_calls.TryGetValue(args[0], out mm)) {
+                TryAllMethods(a, mm, args.Skip(1).ToArray());
+                return;
+            }
+
+            // We didn't find a match; show general help
+            ShowHelp(String.Format("Method '{0}' is not recognized.", args[0]), a, wrapped_calls.Keys.ToList());
+
+        // User didn't specify anything, just show general help
         } else {
-            ShowHelp(null, a, wrapped_calls);
+            ShowHelp(null, a, wrapped_calls.Keys.ToList());
         }
     }
     #endregion
@@ -155,6 +165,27 @@ public static class CommandWrapLib
         // Okay, we couldn't succeed according to any of the methods.  Let's pick the one with the most parameters and show help for it
         TryMethod(a, biggest_method, args, true);
         return -1;
+    }
+
+    /// <summary>
+    /// Try all methods from a matching list
+    /// </summary>
+    /// <param name="a"></param>
+    /// <param name="matchingMethods"></param>
+    /// <param name="args"></param>
+    /// <param name="p"></param>
+    private static void TryAllMethods(Assembly a, MatchingMethods methods_to_try, string[] args)
+    {
+        // Try each method once
+        foreach (MethodInfo mi in methods_to_try.Methods) {
+            if (TryMethod(a, mi, args, false)) {
+                return;
+            }
+        }
+
+        // No calls succeeded; show help for the biggest method
+        MethodInfo big = methods_to_try.GetBiggestMethod();
+        TryMethod(a, big, args, true);
     }
 
     /// <summary>
@@ -560,5 +591,29 @@ public static class CommandWrapLib
 /// </summary>
 public class Wrap : Attribute
 {
+    /// <summary>
+    /// The displayed name of this wrapped function
+    /// </summary>
+    public string Name = null;
+
+    /// <summary>
+    /// The rich description of the wrapped function (overrides the XML help text if defined).
+    /// </summary>
+    public string Description = null;
+}
+
+public class MatchingMethods
+{
+    public List<MethodInfo> Methods;
+
+    public MatchingMethods()
+    {
+        Methods = new List<MethodInfo>();
+    }
+
+    public MethodInfo GetBiggestMethod()
+    {
+        return (from MethodInfo mi in Methods select mi).First();
+    }
 }
 
