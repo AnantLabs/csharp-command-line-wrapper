@@ -27,6 +27,42 @@ using System.ComponentModel;
 /// </summary>
 public static class CommandWrapLib
 {
+    #region Wrapper Library Variables
+
+    /// <summary>
+    /// If the user requests that we log the output of the task (using "-L folder"), here's where we go
+    /// </summary>
+    private static string _log_folder;
+    private static StreamWriter _log_writer;
+
+    /// <summary>
+    /// Wrapper class for our output redirect
+    /// </summary>
+    private class OutputRedirect : TextWriter
+    {
+        public string Name;
+        public TextWriter OldWriter;
+
+        public override Encoding Encoding
+        {
+            get { return OldWriter.Encoding; }
+        }
+
+        public override void Write(char[] buffer, int index, int count)
+        {
+            // Did the user redirect our output to a log file?  If so, do it!
+            if (_log_writer != null) {
+                string s = new string(buffer, index, count);
+                _log_writer.Write(String.Format("{0} {1} {2}", DateTime.Now, Name, s));
+                _log_writer.Flush();
+            }
+
+            // Then write our text
+            OldWriter.Write(buffer, index, count);
+        }
+    }
+    #endregion
+
     #region Generic public interface for wrapping an arbitrary number of functions
     /// <summary>
     /// Looks through the list of public static interfaces and offers a choice of functions to call
@@ -210,63 +246,93 @@ public static class CommandWrapLib
         // Populate all the parameters from the arglist
         object[] callparams = new object[pilist.Length];
         for (int i = 0; i < args.Length; i++) {
+            string thisarg = args[i];
 
-            // If there's an equals, handle that
-            string paramname, paramstr;
-            int equalspos = args[i].IndexOf("=");
-            if (equalspos > 0) {
-                paramname = args[i].Substring(0, equalspos);
-                paramstr = args[i].Substring(equalspos + 1);
-            } else {
-                paramname = args[i];
-                if (i == args.Length - 1) {
-                    if (show_help_on_failure) ShowHelp(String.Format("Missing value for {0}.", paramname), a, m);
-                    return false;
-                }
-                i++;
-                paramstr = args[i];
-            }
+            // Parameters with a double-hyphen are function parameters
+            if (thisarg.StartsWith("--")) {
+                thisarg = thisarg.Substring(2);
 
-            // Clean up the argument
-            if (paramname.StartsWith("--")) {
-                paramname = paramname.Substring(2);
-            } else if (paramname.StartsWith("-")) {
-                paramname = paramname.Substring(1);
-            }
-
-            // Figure out what parameter this corresponds to
-            var v = (from ParameterInfo pi in pilist where String.Equals(pi.Name, paramname, StringComparison.CurrentCultureIgnoreCase) select pi).FirstOrDefault();
-            if (v == null) {
-                if (show_help_on_failure) ShowHelp(String.Format("Unrecognized option {0}", args[i]), a, m);
-                return false;
-            }
-
-            // Figure out its position in the call params
-            int pos = Array.IndexOf(pilist, v);
-            object thisparam = null;
-
-            // Attempt to parse this parameter
-            try {
-                try {
-                    if (v.ParameterType == typeof(Guid)) {
-                        thisparam = Guid.Parse(paramstr);
-                    } else {
-                        thisparam = Convert.ChangeType(paramstr, v.ParameterType);
+                // If there's an equals, handle that
+                string paramname, paramstr;
+                int equalspos = thisarg.IndexOf("=");
+                if (equalspos > 0) {
+                    paramname = thisarg.Substring(0, equalspos);
+                    paramstr = thisarg.Substring(equalspos + 1);
+                } else {
+                    paramname = thisarg;
+                    if (i == args.Length - 1) {
+                        if (show_help_on_failure) ShowHelp(String.Format("Missing value for {0}.", paramname), a, m);
+                        return false;
                     }
-                } catch (Exception ex) {
-                    if (show_help_on_failure) ShowHelp(String.Format("Unable to convert '{0}' into type {1}.\n\n{2}\n\n", paramstr, v.ParameterType.FullName, ex.ToString()), a, m);
+                    i++;
+                    paramstr = thisarg;
+                }
+
+                // Figure out what parameter this corresponds to
+                var v = (from ParameterInfo pi in pilist where String.Equals(pi.Name, paramname, StringComparison.CurrentCultureIgnoreCase) select pi).FirstOrDefault();
+                if (v == null) {
+                    if (show_help_on_failure) ShowHelp(String.Format("Unrecognized option {0}", args[i]), a, m);
                     return false;
                 }
-            } catch {
-                if (show_help_on_failure) ShowHelp(String.Format("The value {0} is not valid for {1} - required '{2}'", paramstr, args[i], v.ParameterType.FullName), a, m);
-                return false;
-            }
 
-            // Did we fail to get a parameter?
-            if (thisparam == null) {
-                throw new Exception(String.Format("Parameter {0} requires the complex type {1}, and cannot be passed on the command line.", v.Name, v.ParameterType.FullName));
+                // Figure out its position in the call params
+                int pos = Array.IndexOf(pilist, v);
+                object thisparam = null;
+
+                // Attempt to parse this parameter
+                try {
+                    try {
+                        if (v.ParameterType == typeof(Guid)) {
+                            thisparam = Guid.Parse(paramstr);
+                        } else {
+                            thisparam = Convert.ChangeType(paramstr, v.ParameterType);
+                        }
+                    } catch (Exception ex) {
+                        if (show_help_on_failure) ShowHelp(String.Format("Unable to convert '{0}' into type {1}.\n\n{2}\n\n", paramstr, v.ParameterType.FullName, ex.ToString()), a, m);
+                        return false;
+                    }
+                } catch {
+                    if (show_help_on_failure) ShowHelp(String.Format("The value {0} is not valid for {1} - required '{2}'", paramstr, args[i], v.ParameterType.FullName), a, m);
+                    return false;
+                }
+
+                // Did we fail to get a parameter?
+                if (thisparam == null) {
+                    throw new Exception(String.Format("Parameter {0} requires the complex type {1}, and cannot be passed on the command line.", v.Name, v.ParameterType.FullName));
+                }
+                callparams[pos] = thisparam;
+
+            // Any parameter with a single hyphen is a "WrapLib" parameter
+            } else if (thisarg.StartsWith("-")) {
+                char wrap_param = thisarg[1];
+
+                // Which parameter did the user pass?
+                switch (wrap_param) {
+
+                    // Log to a folder
+                    case 'L':
+                        if (i == args.Length - 1) {
+                            ShowHelp("Missing log folder name for '-L' option.  Please specify '-L <folder>'.", a, m);
+                            return false;
+                        }
+
+                        // Consume the next parameter
+                        i++;
+                        _log_folder = args[i];
+                        if (!Directory.Exists(_log_folder)) {
+                            Console.WriteLine("Creating log folder {0}", _log_folder);
+                            Directory.CreateDirectory(_log_folder);
+                        }
+
+                        // The task will begin logging when the call succeeds
+                        break;
+
+                    // Unrecognized option
+                    default:
+                        ShowHelp(String.Format("Unrecognized option '-{0}'.", wrap_param), a, m);
+                        return false;
+                }
             }
-            callparams[pos] = thisparam;
         }
 
         // Ensure all mandatory parameters are filled in
@@ -281,9 +347,41 @@ public static class CommandWrapLib
         DateTime start_time = DateTime.Now;
         object result = null;
         try {
-            m.Invoke(null, callparams);
-            if (result != null) {
-                Console.WriteLine("RESULT: {0} ({1})", result, result.GetType());
+
+            // Okay, we're about to invoke!  Did the user want us to log the output?
+            try {
+                if (!String.IsNullOrEmpty(_log_folder)) {
+                    string logfilename = null;
+                    while (true) {
+                        logfilename = Path.Combine(_log_folder, DateTime.Now.ToString("o").Replace(':', '_') + ".log");
+                        if (!File.Exists(logfilename)) break;
+                        System.Threading.Thread.Sleep(10);
+                    }
+                    _log_writer = new StreamWriter(logfilename);
+                }
+
+                // Create a redirect for STDOUT & STDERR
+                OutputRedirect StdOutRedir = new OutputRedirect() { Name = "STDOUT", OldWriter = Console.Out };
+                OutputRedirect StdErrRedir = new OutputRedirect() { Name = "STDERR", OldWriter = Console.Error };
+                try {
+                    Console.SetOut(StdOutRedir);
+                    Console.SetError(StdErrRedir);
+
+                    // Execute our class
+                    m.Invoke(null, callparams);
+                    if (result != null) {
+                        Console.WriteLine("RESULT: {0} ({1})", result, result.GetType());
+                    }
+
+                // Reset the standard out and standard error - this ensures no future errors after execution
+                } finally {
+                    Console.SetOut(StdOutRedir.OldWriter);
+                    Console.SetError(StdErrRedir.OldWriter);
+                }
+
+            // Close gracefully
+            } finally {
+                if (_log_writer != null) _log_writer.Close();
             }
 
         // Show some useful diagnostics
