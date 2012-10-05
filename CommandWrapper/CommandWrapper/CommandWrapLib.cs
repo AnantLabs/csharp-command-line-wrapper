@@ -243,8 +243,13 @@ public static class CommandWrapLib
             return false;
         }
 
-        // Populate all the parameters from the arglist
+        // By default, all values are "missing" 
         object[] callparams = new object[pilist.Length];
+        for (int i = 0; i < pilist.Length; i++) {
+            callparams[i] = Type.Missing;
+        }
+
+        // Now let's sift through our command line arguments and populate all the parameters from the arglist
         for (int i = 0; i < args.Length; i++) {
             string thisarg = args[i];
 
