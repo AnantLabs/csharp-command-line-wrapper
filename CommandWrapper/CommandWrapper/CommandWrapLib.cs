@@ -273,6 +273,8 @@ public static class CommandWrapLib
                     try {
                         if (v.ParameterType == typeof(Guid)) {
                             thisparam = Guid.Parse(paramstr);
+                        } else if (v.ParameterType.IsEnum) {
+                            thisparam = Enum.Parse(v.ParameterType, paramstr);
                         } else {
                             thisparam = Convert.ChangeType(paramstr, v.ParameterType);
                         }
