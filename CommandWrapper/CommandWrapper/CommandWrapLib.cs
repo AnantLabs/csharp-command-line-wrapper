@@ -74,8 +74,8 @@ public static class CommandWrapLib
         Assembly a = Assembly.GetEntryAssembly();
 
         // Can we find the type and method?
-        Dictionary<string, MatchingMethods> wrapped_calls = new Dictionary<string, MatchingMethods>();
-        Dictionary<string, MatchingMethods> all_calls = new Dictionary<string, MatchingMethods>();
+        MethodHelper wrapped_calls = new MethodHelper();
+        MethodHelper all_calls = new MethodHelper();
         foreach (Type atype in a.GetTypes()) {
             if (atype == typeof(CommandWrapLib)) continue;
 
@@ -85,30 +85,14 @@ public static class CommandWrapLib
                 foreach (MethodInfo mi in methods) {
 
                     // Retrieve the call and wrap names
-                    string call = atype.Name + "." + mi.Name;
-                    bool is_wrapped = false;
-                    string wrap = null;
-                    foreach (Attribute attr in mi.GetCustomAttributes(true)) {
-                        if (attr is Wrap) {
-                            is_wrapped = true;
-                            wrap = ((Wrap)attr).Name;
-                            if (String.IsNullOrEmpty(wrap)) wrap = call;
-                        }
-                    }
+                    string call = mi.GetWrapName();
 
                     // Record this function in the "all static calls" list
-                    MatchingMethods mm = null;
-                    all_calls.TryGetValue(call, out mm);
-                    if (mm == null) mm = new MatchingMethods();
-                    mm.Methods.Add(mi);
-                    all_calls[call] = mm;
+                    all_calls.AddMethod(call, mi);
 
                     // Record this function in the "wrapped calls" list if appropriate
-                    if (is_wrapped) {
-                        wrapped_calls.TryGetValue(wrap, out mm);
-                        if (mm == null) mm = new MatchingMethods();
-                        mm.Methods.Add(mi);
-                        wrapped_calls[wrap] = mm;
+                    if (mi.IsWrapped()) {
+                        wrapped_calls.AddMethod(call, mi);
                     }
                 }
             }
@@ -122,7 +106,7 @@ public static class CommandWrapLib
         
         // There was only one wrapped call - assume we're calling that!
         if (wrapped_calls.Count == 1) {
-            TryAllMethods(a, wrapped_calls.Values.ToArray()[0], args);
+            TryAllMethods(a, wrapped_calls.GetOnlyMethod(), args);
             return;
         }
 
@@ -137,11 +121,11 @@ public static class CommandWrapLib
             }
 
             // We didn't find a match; show general help
-            ShowHelp(String.Format("Method '{0}' is not recognized.", args[0]), a, wrapped_calls.Keys.ToList());
+            ShowHelp(String.Format("Method '{0}' is not recognized.", args[0]), a, wrapped_calls);
 
         // User didn't specify anything, just show general help
         } else {
-            ShowHelp(null, a, wrapped_calls.Keys.ToList());
+            ShowHelp(null, a, wrapped_calls);
         }
     }
     #endregion
@@ -405,7 +389,7 @@ public static class CommandWrapLib
     /// <param name="syntax_error_message"></param>
     /// <param name="a"></param>
     /// <param name="possible_calls"></param>
-    private static int ShowHelp(string syntax_error_message, Assembly a, List<string> possible_calls)
+    private static int ShowHelp(string syntax_error_message, Assembly a, MethodHelper possible_calls)
     {
         // Build the "advice" section
         StringBuilder advice = new StringBuilder();
@@ -417,8 +401,8 @@ public static class CommandWrapLib
 
         // Show all possible methods
         advice.AppendLine("METHODS:");
-        foreach (string call in possible_calls) {
-            advice.AppendLine("    " + call);
+        foreach (MatchingMethods mm in possible_calls.ListMethods()) {
+            advice.AppendLine(mm.GetAdviceLine());
         }
 
         // Shell to the root function
@@ -529,6 +513,58 @@ public static class CommandWrapLib
     public static T GetMetadata<T>(this Assembly a)
     {
         return (T)(from object attr in a.GetCustomAttributes(typeof(T), false) select attr).FirstOrDefault();
+    }
+    #endregion
+
+    #region Extension Methods for "MethodInfo"
+    /// <summary>
+    /// Get the wrapper name of this method, if available
+    /// </summary>
+    /// <param name="mi"></param>
+    /// <returns></returns>
+    public static string GetWrapName(this MethodInfo mi)
+    {
+        foreach (Attribute attr in mi.GetCustomAttributes(true)) {
+            if (attr is Wrap) {
+                string wrap = ((Wrap)attr).Name;
+                if (!String.IsNullOrEmpty(wrap)) return wrap;
+            }
+        }
+
+        // Return something else
+        return mi.DeclaringType.ToString() + "." + mi.Name;
+    }
+
+    /// <summary>
+    /// Get the wrapper description of this method, if available
+    /// </summary>
+    /// <param name="mi"></param>
+    /// <returns></returns>
+    public static string GetWrapDesc(this MethodInfo mi)
+    {
+        foreach (Attribute attr in mi.GetCustomAttributes(true)) {
+            if (attr is Wrap) {
+                return ((Wrap)attr).Description;
+            }
+        }
+
+        // Nothing
+        return null;
+    }
+
+    /// <summary>
+    /// Returns true if this function call is wrapped
+    /// </summary>
+    /// <param name="mi"></param>
+    /// <returns></returns>
+    public static bool IsWrapped(this MethodInfo mi)
+    {
+        foreach (Attribute attr in mi.GetCustomAttributes(true)) {
+            if (attr is Wrap) {
+                return true;
+            }
+        }
+        return false;
     }
     #endregion
 
@@ -705,6 +741,9 @@ public class Wrap : Attribute
     public string Description = null;
 }
 
+/// <summary>
+/// Information about all methods that can be used in this process
+/// </summary>
 public class MatchingMethods
 {
     public List<MethodInfo> Methods;
@@ -718,5 +757,81 @@ public class MatchingMethods
     {
         return (from MethodInfo mi in Methods select mi).First();
     }
+
+    public string GetAdviceLine()
+    {
+        MethodInfo mi = GetBiggestMethod();
+        string name = mi.GetWrapName();
+        string desc = mi.GetWrapDesc();
+        if (String.IsNullOrEmpty(desc)) {
+            return String.Format("    {0}", name);
+        } else {
+            return String.Format("    {0} - {1}", name, desc);
+        }
+    }
 }
 
+/// <summary>
+/// A helper class that lists all the available methods that can be called
+/// </summary>
+public class MethodHelper
+{
+    protected Dictionary<string, MatchingMethods> _dict = new Dictionary<string, MatchingMethods>();
+
+    /// <summary>
+    /// Add a method to this helper list
+    /// </summary>
+    /// <param name="call"></param>
+    /// <param name="mi"></param>
+    public void AddMethod(string call, MethodInfo mi)
+    {
+        MatchingMethods mm = null;
+        _dict.TryGetValue(call, out mm);
+        if (mm == null) mm = new MatchingMethods();
+        mm.Methods.Add(mi);
+        _dict[call] = mm;
+    }
+
+    /// <summary>
+    /// How many methods are wrapped?
+    /// </summary>
+    public int Count
+    {
+        get
+        {
+            return _dict.Count;
+        }
+    }
+
+    /// <summary>
+    /// Return the first method, since only one matches any potential
+    /// </summary>
+    /// <returns></returns>
+    public MatchingMethods GetOnlyMethod()
+    {
+        if (Count != 1) {
+            throw new Exception("There isn't only one matching method.");
+        }
+        return _dict.Values.FirstOrDefault();
+    }
+
+    /// <summary>
+    /// Attempt to find a matching method to the call name
+    /// </summary>
+    /// <param name="p"></param>
+    /// <param name="mm"></param>
+    /// <returns></returns>
+    public bool TryGetValue(string call, out MatchingMethods mm)
+    {
+        return _dict.TryGetValue(call, out mm);
+    }
+
+    /// <summary>
+    /// Return a list of the biggest possible matching methods
+    /// </summary>
+    /// <returns></returns>
+    public IEnumerable<MatchingMethods> ListMethods()
+    {
+        return _dict.Values;
+    }
+}
