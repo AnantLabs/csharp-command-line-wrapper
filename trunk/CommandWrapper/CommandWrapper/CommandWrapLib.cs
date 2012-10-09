@@ -269,8 +269,16 @@ public static class CommandWrapLib
         for (int i = 0; i < pilist.Length; i++) {
             parameters[i] = Type.Missing;
 
+            // Is this an optional parameter?  Skip it if optional
+            Control c = f.Controls.Find("check" + i.ToString(), true).FirstOrDefault();
+            if (c is CheckBox) {
+                if (!((CheckBox)c).Checked) {
+                    continue;
+                }
+            }
+
             // Find our control!
-            Control c = f.Controls.Find("param" + i.ToString(), true).FirstOrDefault();
+            c = f.Controls.Find("param" + i.ToString(), true).FirstOrDefault();
 
             // Can we parse its value?
             object val = null;
