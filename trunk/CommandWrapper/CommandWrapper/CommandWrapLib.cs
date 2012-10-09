@@ -21,6 +21,7 @@ using System.Reflection;
 using System.Xml;
 using System.IO;
 using System.ComponentModel;
+using System.Windows.Forms;
 
 /// <summary>
 /// This is the command wrap class - it does not have a namespace definition to prevent complications if you "drop it" directly into an existing project.
@@ -34,6 +35,7 @@ public static class CommandWrapLib
     /// </summary>
     private static string _log_folder;
     private static StreamWriter _log_writer;
+    private static MethodHelper _methods;
 
     /// <summary>
     /// Wrapper class for our output redirect
@@ -55,6 +57,9 @@ public static class CommandWrapLib
                 string s = new string(buffer, index, count);
                 _log_writer.Write(String.Format("{0} {1} {2}", DateTime.Now, Name, s));
                 _log_writer.Flush();
+            } else if (_txtOutput != null) {
+                string s = new string(buffer, index, count);
+                _txtOutput.AppendText(String.Format("{0} {1} {2}", DateTime.Now, Name, s));
             }
 
             // Then write our text
@@ -72,7 +77,41 @@ public static class CommandWrapLib
     {
         // Use the main assembly
         Assembly a = Assembly.GetEntryAssembly();
+        _methods = FindMethods(a);
+        
+        // There was only one wrapped call - assume we're calling that!
+        if (_methods.Count == 1) {
+            TryAllMethods(a, _methods.GetOnlyMethod(), args);
+            return;
+        }
 
+        // Did the user provide any arguments?  If so, try to interpret in a way that results in a function call
+        if (args.Length > 0) {
+
+            // If we have arguments, let's attempt to call the matching one of them
+            MatchingMethods mm = null;
+            if (_methods.TryGetValue(args[0], out mm)) {
+                TryAllMethods(a, mm, args.Skip(1).ToArray());
+                return;
+            }
+
+            // We didn't find a match; show general help
+            ShowHelp(String.Format("Method '{0}' is not recognized.", args[0]), a, _methods);
+
+        // User didn't specify anything, just show general help
+        } else {
+            //ShowHelp(null, a, wrapped_calls);
+            ShowGui(a, _methods);
+        }
+    }
+
+    /// <summary>
+    /// Search through the assembly to find all methods that we can call
+    /// </summary>
+    /// <param name="a"></param>
+    /// <returns></returns>
+    private static MethodHelper FindMethods(Assembly a)
+    {
         // Can we find the type and method?
         MethodHelper wrapped_calls = new MethodHelper();
         MethodHelper all_calls = new MethodHelper();
@@ -101,31 +140,350 @@ public static class CommandWrapLib
         // We didn't find a valid call - notify the user of all the possibilities.
         if (wrapped_calls.Count == 0) {
             System.Diagnostics.Debug.WriteLine("You did not apply the [Wrap] attribute to any functions.  I will show all possible static functions within this assembly.  To filter the list of options down, please apply the [Wrap] attribute to the functions you wish to be callable from the command line.");
-            wrapped_calls = all_calls;
-        } 
-        
-        // There was only one wrapped call - assume we're calling that!
-        if (wrapped_calls.Count == 1) {
-            TryAllMethods(a, wrapped_calls.GetOnlyMethod(), args);
-            return;
+            return all_calls;
+        } else {
+            return wrapped_calls;
         }
+    }
+    #endregion
 
-        // Did the user provide any arguments?  If so, try to interpret in a way that results in a function call
-        if (args.Length > 0) {
+    #region WinForms Interface
+    private static ComboBox _ddlMethodSelector;
+    private static GroupBox _gMethodBox;
+    private static GroupBox _gRequiredParameters;
+    private static GroupBox _gOptionalParameters;
+    private static Button _btnInvoke;
+    private static Dictionary<int, MethodInfo> _method_dict;
+    private static Form _frmOutput;
+    private static TextBox _txtOutput;
 
-            // If we have arguments, let's attempt to call the matching one of them
-            MatchingMethods mm = null;
-            if (wrapped_calls.TryGetValue(args[0], out mm)) {
-                TryAllMethods(a, mm, args.Skip(1).ToArray());
-                return;
+    /// <summary>
+    /// Show a WinForms variant of the interface
+    /// </summary>
+    /// <param name="a"></param>
+    /// <param name="wrapped_calls"></param>
+    private static void ShowGui(Assembly a, MethodHelper wrapped_calls)
+    {
+        // Let's make a window that's as big as the first Windows 3.0 desktop I ever had!
+        Form f = new Form();
+        f.Text = a.GetName().Name;
+        f.Width = 600;
+        f.Height = 400;
+
+        // Add a group box to identify method selection
+        _gMethodBox = new GroupBox();
+        _gMethodBox.Text = "Methods";
+        _gMethodBox.Left = 10;
+        _gMethodBox.Top = 10;
+        _gMethodBox.Width = f.ClientRectangle.Width - 20;
+        _gMethodBox.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
+
+        // Add a dropdown box to select from the available methods
+        _ddlMethodSelector = new ComboBox();
+        _ddlMethodSelector.DropDownStyle = ComboBoxStyle.DropDownList;
+        _ddlMethodSelector.Items.Add("(select a method to invoke)");
+        int num = 0;
+        _method_dict = new Dictionary<int, MethodInfo>();
+        foreach (MatchingMethods mm in wrapped_calls.ListMethods()) {
+            foreach (MethodInfo mi in mm.Methods) {
+                if (mm.Methods.Count == 1) {
+                    _ddlMethodSelector.Items.Add(mi.Name);
+                } else {
+                    StringBuilder sb = new StringBuilder();
+                    sb.Append(mi.Name);
+                    sb.Append(" (");
+                    foreach (ParameterInfo pi in mi.GetParameters()) {
+                        sb.Append(pi.ParameterType);
+                        sb.Append(", ");
+                    }
+                    sb.Length -= 2;
+                    sb.Append(")");
+                    _ddlMethodSelector.Items.Add(sb.ToString());
+                }
+                _method_dict[num] = mi;
+                num++;
+            }
+        }
+        _ddlMethodSelector.SelectedIndex = 0;
+        _ddlMethodSelector.Left = 10;
+        _ddlMethodSelector.Top = 20;
+        _ddlMethodSelector.Width = _gMethodBox.Width - 20;
+        _ddlMethodSelector.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
+        _ddlMethodSelector.SelectedIndexChanged += new EventHandler(ddlMethodSelector_SelectedIndexChanged);
+        _gMethodBox.Controls.Add(_ddlMethodSelector);
+        _gMethodBox.Height = _ddlMethodSelector.Top + _ddlMethodSelector.Height + 10;
+
+        // Add placeholders for required parameters box
+        _gRequiredParameters = new GroupBox();
+        _gRequiredParameters.Text = "Required Parameters";
+        _gRequiredParameters.Left = 10;
+        _gRequiredParameters.Top = _gMethodBox.Top + _gMethodBox.Height + 10;
+        _gRequiredParameters.Width = _gMethodBox.Width;
+        _gRequiredParameters.Height = 20;
+        _gRequiredParameters.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
+
+        // Placeholder for optional param group box
+        _gOptionalParameters = new GroupBox();
+        _gOptionalParameters.Text = "Optional Parameters";
+        _gOptionalParameters.Left = 10;
+        _gOptionalParameters.Top = _gRequiredParameters.Top + _gRequiredParameters.Height + 10;
+        _gOptionalParameters.Width = _gMethodBox.Width;
+        _gOptionalParameters.Height = 20;
+        _gOptionalParameters.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
+
+        // Create the "invoke" button
+        _btnInvoke = new Button();
+        _btnInvoke.Text = "Invoke";
+        _btnInvoke.Left = 10;
+        _btnInvoke.Width = _gMethodBox.Width;
+        _btnInvoke.Top = f.ClientRectangle.Height - 20 - _btnInvoke.Height;
+        _btnInvoke.Enabled = false;
+        _btnInvoke.Click += new EventHandler(_btnInvoke_Click);
+        _btnInvoke.Anchor = AnchorStyles.Left | AnchorStyles.Right | AnchorStyles.Bottom;
+
+        // Add this to the form
+        f.Controls.Add(_gMethodBox);
+        f.Controls.Add(_gRequiredParameters);
+        f.Controls.Add(_gOptionalParameters);
+        f.Controls.Add(_btnInvoke);
+
+        // Show this form and let stuff happen!
+        f.ShowDialog();
+    }
+
+    /// <summary>
+    /// Parse all parameters and attempt to invoke the method, if possible!
+    /// </summary>
+    /// <param name="sender"></param>
+    /// <param name="e"></param>
+    static void _btnInvoke_Click(object sender, EventArgs e)
+    {
+        // This function can only be called when _ddlMethodSelector.SelectedIndex > 0
+        MethodInfo mi = _method_dict[_ddlMethodSelector.SelectedIndex - 1];
+        ParameterInfo[] pilist = mi.GetParameters();
+        Form f = ((Button)sender).Parent as Form;
+
+        // Set up basic (missing) parameters for everything
+        object[] parameters = new object[pilist.Length];
+        bool all_ok = true;
+        for (int i = 0; i < pilist.Length; i++) {
+            parameters[i] = Type.Missing;
+
+            // Find our control!
+            Control c = f.Controls.Find("param" + i.ToString(), true).FirstOrDefault();
+
+            // Can we parse its value?
+            object val = null;
+            if (c is ComboBox) {
+                val = ((ComboBox)c).SelectedItem;
+            } else if (c is DateTimePicker) {
+                val = ((DateTimePicker)c).Value;
+            } else if (c is TextBox) {
+                val = ((TextBox)c).Text;
             }
 
-            // We didn't find a match; show general help
-            ShowHelp(String.Format("Method '{0}' is not recognized.", args[0]), a, wrapped_calls);
+            // Convert the parameter to something that can be used - if we fail, beep and highlight
+            try {
+                if (pilist[i].ParameterType.IsEnum) {
+                    parameters[i] = Enum.Parse(pilist[i].ParameterType, val.ToString());
+                } else {
+                    parameters[i] = Convert.ChangeType(val, pilist[i].ParameterType);
+                }
+                c.BackColor = System.Drawing.SystemColors.Window;
+            } catch {
+                c.BackColor = System.Drawing.Color.Yellow;
+                all_ok = false;
+            }
+        }
 
-        // User didn't specify anything, just show general help
+        // Did every single parameter parse correctly?
+        if (all_ok) {
+            TryGuiMethod(f, mi, parameters);
         } else {
-            ShowHelp(null, a, wrapped_calls);
+            MessageBox.Show(f, "Please correct the parameter errors shown above and try again.", "Parameter Error");
+        }
+    }
+
+    private static void TryGuiMethod(Form parent, MethodInfo mi, object[] parameters)
+    {
+        Cursor.Current = Cursors.WaitCursor;
+
+        // Show a form with output from the task
+        _frmOutput = new Form();
+        _frmOutput.Text = mi.Name;
+        _txtOutput = new TextBox();
+        _txtOutput.Dock = DockStyle.Fill;
+        _txtOutput.Font = new System.Drawing.Font("Courier New", 10);
+        _txtOutput.Multiline = true;
+        _frmOutput.Controls.Add(_txtOutput);
+        _frmOutput.Show(parent);
+
+        // Show the parameters that are being used for this call
+        ParameterInfo[] pilist = mi.GetParameters();
+        _txtOutput.AppendText(String.Format("Calling {0} with the parameters:\r\n", mi.Name));
+        for (int i = 0; i < pilist.Length; i++) {
+            _txtOutput.AppendText(String.Format("    {0} = {1}\r\n", pilist[i], parameters[i]));
+        }
+        _txtOutput.AppendText("\r\n");
+
+        // Create a redirect for STDOUT & STDERR
+        OutputRedirect StdOutRedir = new OutputRedirect() { Name = "STDOUT", OldWriter = Console.Out };
+        OutputRedirect StdErrRedir = new OutputRedirect() { Name = "STDERR", OldWriter = Console.Error };
+        try {
+            Console.SetOut(StdOutRedir);
+            Console.SetError(StdErrRedir);
+
+            // Execute our class
+            object result = mi.Invoke(null, parameters);
+            if (result != null) {
+                Console.WriteLine("RESULT: {0} ({1})", result, result.GetType());
+            }
+
+            // Reset the standard out and standard error - this ensures no future errors after execution
+        } finally {
+            Console.SetOut(StdOutRedir.OldWriter);
+            Console.SetError(StdErrRedir.OldWriter);
+        }
+    }
+
+    /// <summary>
+    /// The user has chosen a method to invoke - let's show a user interface for it
+    /// </summary>
+    /// <param name="sender"></param>
+    /// <param name="e"></param>
+    static void ddlMethodSelector_SelectedIndexChanged(object sender, EventArgs e)
+    {
+        // Check to see if the user is allowed to click "invoke"
+        ComboBox cb = sender as ComboBox;
+        _btnInvoke.Enabled = !(cb.SelectedIndex == 0);
+
+        // Clean out any existing controls from the group boxes
+        _gRequiredParameters.Controls.Clear();
+        _gRequiredParameters.Height = 20;
+        _gOptionalParameters.Controls.Clear();
+        _gOptionalParameters.Height = 20;
+
+        // Find the method we want to show - and don't do anything if the user went up to index zero
+        int MaxWidth = 0;
+        if (cb.SelectedIndex > 0) {
+            MethodInfo mi = _method_dict[cb.SelectedIndex - 1];
+
+            // Set up input boxes for everything
+            GroupBox target = null;
+            ParameterInfo[] pilist = mi.GetParameters();
+            for (int i = 0; i < pilist.Length; i++) {
+                ParameterInfo pi = pilist[i];
+
+                // Make the label
+                Label l = new Label();
+                l.Name = "lbl" + i.ToString();
+                l.Text = pi.Name;
+                l.Left = 10;
+                l.Width = 100;
+                MaxWidth = Math.Max(MaxWidth, TextRenderer.MeasureText(l.Text, l.Font).Width) + 4;
+                l.TextAlign = System.Drawing.ContentAlignment.MiddleRight;
+                l.Anchor = AnchorStyles.Left | AnchorStyles.Top;
+
+                // Make a control for the data entry
+                Control c = null;
+                if (pi.ParameterType.IsEnum) {
+                    ComboBox ddl = new ComboBox();
+                    ddl.DropDownStyle = ComboBoxStyle.DropDownList;
+                    ddl.Items.Add("(select)");
+                    foreach (var v in Enum.GetValues(pi.ParameterType)) {
+                        ddl.Items.Add(v.ToString());
+                    }
+                    ddl.SelectedIndex = 0;
+                    c = ddl;
+                } else if (pi.ParameterType == typeof(DateTime)) {
+                    c = new DateTimePicker();
+                } else {
+                    c = new TextBox();
+                }
+                c.Width = _gRequiredParameters.Width - 100 - 30;
+                c.Left = 100 + 20;
+                c.Anchor = AnchorStyles.Left | AnchorStyles.Right | AnchorStyles.Top;
+                c.Name = "param" + i.ToString();
+
+                // Is the parameter optional?
+                CheckBox check = null;
+                if (pi.IsOptional) {
+                    check = new CheckBox();
+                    check.Name = "check" + i.ToString();
+                    check.Left = c.Left;
+                    check.CheckedChanged += new EventHandler(check_CheckedChanged);
+                    check.Width = check.Height;
+                    c.Left = check.Left + check.Width + 10;
+                    c.Width = c.Width - check.Width - 10;
+                    target = _gOptionalParameters;
+                } else {
+                    target = _gRequiredParameters;
+                }
+
+                // Add to the target box
+                int top = 20;
+                if (target.Controls.Count > 0) {
+                    top = target.Controls[target.Controls.Count - 1].Top + 24;
+                }
+                l.Top = top; //20 + (target.Controls.Count / 2 * (30));
+                c.Top = top;
+                target.Controls.Add(l);
+                if (check != null) {
+                    check.Top = top;
+                    target.Controls.Add(check);
+                    c.Enabled = false;
+                }
+                target.Controls.Add(c);
+                target.Height = l.Top + l.Height + 10;
+            }
+
+            // Fixup everything to the maximum width value
+            foreach (Control c in _gOptionalParameters.Controls) {
+                if (c.Name.StartsWith("lbl")) {
+                    c.Width = MaxWidth;
+                    c.Top -= 3;
+                } else if (c.Name.StartsWith("check")) {
+                    c.Left = MaxWidth + 20;
+                } else if (c.Name.StartsWith("param")) {
+                    c.Left = MaxWidth + 45;
+                    c.Width = _gRequiredParameters.Width - MaxWidth - 55;
+                }
+            }
+            foreach (Control c in _gRequiredParameters.Controls) {
+                if (c.Name.StartsWith("lbl")) {
+                    c.Width = MaxWidth;
+                    c.Top -= 3;
+                } else if (c.Name.StartsWith("param")) {
+                    c.Left = MaxWidth + 20;
+                    c.Width = _gRequiredParameters.Width - MaxWidth - 30;
+                }
+            }
+        }
+
+        // Fix the positions of the boxes
+        if (_gOptionalParameters.Controls.Count > 0) {
+            _gOptionalParameters.Visible = true;
+            _gOptionalParameters.Top = _gRequiredParameters.Top + _gRequiredParameters.Height + 20;
+            cb.Parent.Parent.MinimumSize = new System.Drawing.Size(MaxWidth + 250, _gOptionalParameters.Top + _gOptionalParameters.Height + _btnInvoke.Height + 80);
+        } else {
+            _gOptionalParameters.Visible = false;
+            cb.Parent.Parent.MinimumSize = new System.Drawing.Size(MaxWidth + 250, _gRequiredParameters.Top + _gRequiredParameters.Height + _btnInvoke.Height + 80);
+        }
+    }
+
+    /// <summary>
+    /// Enable or disable the corresponding data control when the user toggles a parameter
+    /// </summary>
+    /// <param name="sender"></param>
+    /// <param name="e"></param>
+    static void check_CheckedChanged(object sender, EventArgs e)
+    {
+        CheckBox cb = sender as CheckBox;
+
+        // Find the matching data control
+        Control c = cb.Parent.Parent.Controls.Find("param" + cb.Name.Substring(5), true).FirstOrDefault();
+        if (c != null) {
+            c.Enabled = cb.Checked;
         }
     }
     #endregion
@@ -727,6 +1085,7 @@ public static class CommandWrapLib
     #endregion
 }
 
+#region Method Helper Objects
 /// <summary>
 /// This is a tag you can use to specify which functions should be wrapped
 /// </summary>
@@ -837,3 +1196,4 @@ public class MethodHelper
         return _dict.Values;
     }
 }
+#endregion
