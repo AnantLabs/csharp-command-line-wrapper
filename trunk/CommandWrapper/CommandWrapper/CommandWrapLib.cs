@@ -22,6 +22,8 @@ using System.Xml;
 using System.IO;
 using System.ComponentModel;
 using System.Windows.Forms;
+using System.Threading.Tasks;
+using System.Threading;
 
 /// <summary>
 /// This is the command wrap class - it does not have a namespace definition to prevent complications if you "drop it" directly into an existing project.
@@ -59,7 +61,7 @@ public static class CommandWrapLib
                 _log_writer.Flush();
             } else if (_txtOutput != null) {
                 string s = new string(buffer, index, count);
-                _txtOutput.AppendText(String.Format("{0} {1} {2}", DateTime.Now, Name, s));
+                _txtOutput.Invoke((MethodInvoker)delegate { _txtOutput.AppendText(String.Format("{0} {1} {2}", DateTime.Now, Name, s)); });
             }
 
             // Then write our text
@@ -186,11 +188,13 @@ public static class CommandWrapLib
         _method_dict = new Dictionary<int, MethodInfo>();
         foreach (MatchingMethods mm in wrapped_calls.ListMethods()) {
             foreach (MethodInfo mi in mm.Methods) {
+                string name = mi.GetWrapName();
+                if (name == null) name = mi.Name;
                 if (mm.Methods.Count == 1) {
-                    _ddlMethodSelector.Items.Add(mi.Name);
+                    _ddlMethodSelector.Items.Add(name);
                 } else {
                     StringBuilder sb = new StringBuilder();
-                    sb.Append(mi.Name);
+                    sb.Append(name);
                     sb.Append(" (");
                     foreach (ParameterInfo pi in mi.GetParameters()) {
                         sb.Append(pi.ParameterType);
@@ -320,6 +324,7 @@ public static class CommandWrapLib
         _frmOutput = new Form();
         _frmOutput.Text = mi.Name;
         _txtOutput = new TextBox();
+        _txtOutput.ScrollBars = ScrollBars.Both;
         _txtOutput.Dock = DockStyle.Fill;
         _txtOutput.Font = new System.Drawing.Font("Courier New", 10);
         _txtOutput.Multiline = true;
@@ -329,11 +334,26 @@ public static class CommandWrapLib
         // Show the parameters that are being used for this call
         ParameterInfo[] pilist = mi.GetParameters();
         _txtOutput.AppendText(String.Format("Calling {0} with the parameters:\r\n", mi.Name));
+        StringBuilder newname = new StringBuilder();
+        newname.Append(mi.Name);
+        newname.Append("(");
         for (int i = 0; i < pilist.Length; i++) {
             _txtOutput.AppendText(String.Format("    {0} = {1}\r\n", pilist[i], parameters[i]));
+            newname.Append(parameters[i]);
+            newname.Append(",");
         }
+        newname.Length -= 1;
+        newname.Append(");");
+        _frmOutput.Text = newname.ToString();
         _txtOutput.AppendText("\r\n");
 
+        // Spawn this method in a different thread
+        ThreadStart work = delegate { ExecuteMethod(mi, parameters); };
+        new Thread(work).Start();
+    }
+
+    private static void ExecuteMethod(MethodInfo mi, object[] parameters)
+    {
         // Create a redirect for STDOUT & STDERR
         OutputRedirect StdOutRedir = new OutputRedirect() { Name = "STDOUT", OldWriter = Console.Out };
         OutputRedirect StdErrRedir = new OutputRedirect() { Name = "STDERR", OldWriter = Console.Error };
@@ -717,24 +737,7 @@ public static class CommandWrapLib
                     _log_writer = new StreamWriter(logfilename);
                 }
 
-                // Create a redirect for STDOUT & STDERR
-                OutputRedirect StdOutRedir = new OutputRedirect() { Name = "STDOUT", OldWriter = Console.Out };
-                OutputRedirect StdErrRedir = new OutputRedirect() { Name = "STDERR", OldWriter = Console.Error };
-                try {
-                    Console.SetOut(StdOutRedir);
-                    Console.SetError(StdErrRedir);
-
-                    // Execute our class
-                    m.Invoke(null, callparams);
-                    if (result != null) {
-                        Console.WriteLine("RESULT: {0} ({1})", result, result.GetType());
-                    }
-
-                // Reset the standard out and standard error - this ensures no future errors after execution
-                } finally {
-                    Console.SetOut(StdOutRedir.OldWriter);
-                    Console.SetError(StdErrRedir.OldWriter);
-                }
+                ExecuteMethod(m, callparams);
 
             // Close gracefully
             } finally {
