@@ -102,7 +102,6 @@ public static class CommandWrapLib
 
         // User didn't specify anything, just show general help
         } else {
-            //ShowHelp(null, a, wrapped_calls);
             ShowGui(a, _methods);
         }
     }
@@ -350,6 +349,7 @@ public static class CommandWrapLib
         // Spawn this method in a different thread
         ThreadStart work = delegate { ExecuteMethod(mi, parameters); };
         new Thread(work).Start();
+        //ExecuteMethod(mi, parameters);
     }
 
     private static void ExecuteMethod(MethodInfo mi, object[] parameters)
@@ -367,7 +367,7 @@ public static class CommandWrapLib
                 Console.WriteLine("RESULT: {0} ({1})", result, result.GetType());
             }
 
-            // Reset the standard out and standard error - this ensures no future errors after execution
+        // Reset the standard out and standard error - this ensures no future errors after execution
         } finally {
             Console.SetOut(StdOutRedir.OldWriter);
             Console.SetError(StdErrRedir.OldWriter);
@@ -425,6 +425,13 @@ public static class CommandWrapLib
                     c = ddl;
                 } else if (pi.ParameterType == typeof(DateTime)) {
                     c = new DateTimePicker();
+                } else if (pi.ParameterType == typeof(bool)) {
+                    ComboBox ddl = new ComboBox();
+                    ddl.DropDownStyle = ComboBoxStyle.DropDownList;
+                    ddl.Items.Add("False");
+                    ddl.Items.Add("True");
+                    ddl.SelectedIndex = 0;
+                    c = ddl;
                 } else {
                     c = new TextBox();
                 }
@@ -1204,7 +1211,9 @@ public class MethodHelper
     /// <returns></returns>
     public IEnumerable<MatchingMethods> ListMethods()
     {
-        return _dict.Values;
+        List<MatchingMethods> list = new List<MatchingMethods>();
+        list.AddRange(_dict.Values);
+        return (from MatchingMethods mm in list orderby mm.Methods[0].GetWrapName() select mm);
     }
 }
 #endregion
