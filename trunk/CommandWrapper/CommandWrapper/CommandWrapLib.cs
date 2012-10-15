@@ -61,7 +61,7 @@ public static class CommandWrapLib
                 _log_writer.Flush();
             } else if (_txtOutput != null) {
                 string s = new string(buffer, index, count);
-                _txtOutput.Invoke((MethodInvoker)delegate { _txtOutput.AppendText(String.Format("{0} {1} {2}", DateTime.Now, Name, s)); });
+                _txtOutput.Invoke((MethodInvoker)delegate { _txtOutput.SuspendLayout(); _txtOutput.AppendText(String.Format("{0} {1} {2}", DateTime.Now, Name, s)); });
             }
 
             // Then write our text
@@ -157,6 +157,7 @@ public static class CommandWrapLib
     private static Dictionary<int, MethodInfo> _method_dict;
     private static Form _frmOutput;
     private static TextBox _txtOutput;
+    private static System.Windows.Forms.Timer _timer;
 
     /// <summary>
     /// Show a WinForms variant of the interface
@@ -328,7 +329,13 @@ public static class CommandWrapLib
         _txtOutput.Font = new System.Drawing.Font("Courier New", 10);
         _txtOutput.Multiline = true;
         _frmOutput.Controls.Add(_txtOutput);
+        _timer = new System.Windows.Forms.Timer();
+        _timer.Interval = 500;
+        _timer.Tick += new EventHandler(t_Tick);
+        _timer.Start();
+        _frmOutput.FormClosed += new FormClosedEventHandler(_frmOutput_FormClosed);
         _frmOutput.Show(parent);
+        _frmOutput.ControlBox = false;
 
         // Show the parameters that are being used for this call
         ParameterInfo[] pilist = mi.GetParameters();
@@ -346,13 +353,40 @@ public static class CommandWrapLib
         _frmOutput.Text = newname.ToString();
         _txtOutput.AppendText("\r\n");
 
-        // Spawn this method in a different thread
-        ThreadStart work = delegate { ExecuteMethod(mi, parameters); };
-        new Thread(work).Start();
-        //ExecuteMethod(mi, parameters);
+        // Spawn this method in a different thread - but only if we're not debugging!  Threads make debugging harder.
+        if (System.Diagnostics.Debugger.IsAttached) {
+            ExecuteMethod(mi, parameters, _frmOutput);
+
+        // If no debugger is attached, running threads keeps the UI responsive.
+        } else {
+            ThreadStart work = delegate { ExecuteMethod(mi, parameters, _frmOutput); };
+            new Thread(work).Start();
+        }
     }
 
-    private static void ExecuteMethod(MethodInfo mi, object[] parameters)
+    /// <summary>
+    /// Clean up the timer
+    /// </summary>
+    /// <param name="sender"></param>
+    /// <param name="e"></param>
+    static void _frmOutput_FormClosed(object sender, FormClosedEventArgs e)
+    {
+        _timer.Stop();
+        _timer = null;
+    }
+
+    /// <summary>
+    /// Resume layout on the textbox periodically so it doesn't get overwhelmed
+    /// </summary>
+    /// <param name="sender"></param>
+    /// <param name="e"></param>
+    static void t_Tick(object sender, EventArgs e)
+    {
+        System.Windows.Forms.Timer t = sender as System.Windows.Forms.Timer;
+        _txtOutput.ResumeLayout();
+    }
+
+    private static void ExecuteMethod(MethodInfo mi, object[] parameters, Form f)
     {
         // Create a redirect for STDOUT & STDERR
         OutputRedirect StdOutRedir = new OutputRedirect() { Name = "STDOUT", OldWriter = Console.Out };
@@ -372,6 +406,11 @@ public static class CommandWrapLib
             Console.SetOut(StdOutRedir.OldWriter);
             Console.SetError(StdErrRedir.OldWriter);
         }
+
+        // Tell the caller that the function is finished
+        if (f != null) {
+            f.Invoke((MethodInvoker)delegate { f.Text = "FINISHED - " + f.Text; f.ControlBox = true; });
+        }
     }
 
     /// <summary>
@@ -384,6 +423,7 @@ public static class CommandWrapLib
         // Check to see if the user is allowed to click "invoke"
         ComboBox cb = sender as ComboBox;
         _btnInvoke.Enabled = !(cb.SelectedIndex == 0);
+        cb.Parent.Parent.SuspendLayout();
 
         // Clean out any existing controls from the group boxes
         _gRequiredParameters.Controls.Clear();
@@ -504,6 +544,7 @@ public static class CommandWrapLib
             _gOptionalParameters.Visible = false;
             cb.Parent.Parent.MinimumSize = new System.Drawing.Size(MaxWidth + 250, _gRequiredParameters.Top + _gRequiredParameters.Height + _btnInvoke.Height + 80);
         }
+        cb.Parent.Parent.ResumeLayout();
     }
 
     /// <summary>
@@ -744,7 +785,7 @@ public static class CommandWrapLib
                     _log_writer = new StreamWriter(logfilename);
                 }
 
-                ExecuteMethod(m, callparams);
+                ExecuteMethod(m, callparams, null);
 
             // Close gracefully
             } finally {
