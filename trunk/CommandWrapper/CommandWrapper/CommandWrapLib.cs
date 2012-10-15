@@ -150,6 +150,7 @@ public static class CommandWrapLib
 
     #region WinForms Interface
     private static ComboBox _ddlMethodSelector;
+    private static Label _lblMethodDescriptor;
     private static GroupBox _gMethodBox;
     private static GroupBox _gRequiredParameters;
     private static GroupBox _gOptionalParameters;
@@ -215,7 +216,15 @@ public static class CommandWrapLib
         _ddlMethodSelector.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
         _ddlMethodSelector.SelectedIndexChanged += new EventHandler(ddlMethodSelector_SelectedIndexChanged);
         _gMethodBox.Controls.Add(_ddlMethodSelector);
-        _gMethodBox.Height = _ddlMethodSelector.Top + _ddlMethodSelector.Height + 10;
+
+        // Create a label to describe the method
+        _lblMethodDescriptor = new Label();
+        _lblMethodDescriptor.Left = 10;
+        _lblMethodDescriptor.Top = _ddlMethodSelector.Top + _ddlMethodSelector.Height + 10;
+        _lblMethodDescriptor.Width = _ddlMethodSelector.Width;
+        _lblMethodDescriptor.Height = 40;
+        _gMethodBox.Controls.Add(_lblMethodDescriptor);
+        _gMethodBox.Height = _lblMethodDescriptor.Top + _lblMethodDescriptor.Height + 10;
 
         // Add placeholders for required parameters box
         _gRequiredParameters = new GroupBox();
@@ -435,6 +444,9 @@ public static class CommandWrapLib
         int MaxWidth = 0;
         if (cb.SelectedIndex > 0) {
             MethodInfo mi = _method_dict[cb.SelectedIndex - 1];
+
+            // Describe it!
+            _lblMethodDescriptor.Text = mi.GetWrapDesc();
 
             // Set up input boxes for everything
             GroupBox target = null;
