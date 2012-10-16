@@ -75,6 +75,7 @@ public static class CommandWrapLib
     /// Looks through the list of public static interfaces and offers a choice of functions to call
     /// </summary>
     /// <param name="args"></param>
+    [STAThread]
     public static void Main(string[] args)
     {
         // Use the main assembly
@@ -486,6 +487,7 @@ public static class CommandWrapLib
                     c = ddl;
                 } else {
                     c = new TextBox();
+                    c.KeyDown += new KeyEventHandler(c_KeyDown);
                 }
                 c.Width = _gRequiredParameters.Width - 100 - 30;
                 c.Left = 100 + 20;
@@ -557,6 +559,23 @@ public static class CommandWrapLib
             cb.Parent.Parent.MinimumSize = new System.Drawing.Size(MaxWidth + 250, _gRequiredParameters.Top + _gRequiredParameters.Height + _btnInvoke.Height + 80);
         }
         cb.Parent.Parent.ResumeLayout();
+    }
+
+    /// <summary>
+    /// Intercept problematic pastes with multiple lines of text and replace them with comma-delimited values
+    /// </summary>
+    /// <param name="sender"></param>
+    /// <param name="e"></param>
+    static void c_KeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.KeyCode == Keys.V) {
+            if ((Control.ModifierKeys & Keys.Control) != 0) {
+
+                // Detected a paste command - Do we have "excel" data in the clipboard?
+                TextBox tb = sender as TextBox;
+                tb.Text = Clipboard.GetText(TextDataFormat.UnicodeText).Replace("\r\n", ",");
+            }
+        }
     }
 
     /// <summary>
