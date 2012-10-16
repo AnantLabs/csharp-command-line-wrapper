@@ -571,9 +571,10 @@ public static class CommandWrapLib
         if (e.KeyCode == Keys.V) {
             if ((Control.ModifierKeys & Keys.Control) != 0) {
 
-                // Detected a paste command - Do we have "excel" data in the clipboard?
+                // Detected a paste command - Do we have "excel" data in the clipboard?  If so, convert it into a list!
                 TextBox tb = sender as TextBox;
-                tb.Text = Clipboard.GetText(TextDataFormat.UnicodeText).Replace("\r\n", ",");
+                string s = Clipboard.GetText(TextDataFormat.UnicodeText);
+                Clipboard.SetText(s.Replace("\r\n", ","));
             }
         }
     }
