@@ -38,6 +38,7 @@ public static class CommandWrapLib
     private static string _log_folder;
     private static StreamWriter _log_writer;
     private static MethodHelper _methods;
+    private static List<PropertyInfo> _properties;
 
     /// <summary>
     /// Wrapper class for our output redirect
@@ -70,7 +71,7 @@ public static class CommandWrapLib
     }
     #endregion
 
-    #region Generic public interface for wrapping an arbitrary number of functions
+    #region Main() entry point - Find methods and properties to expose!
     /// <summary>
     /// Looks through the list of public static interfaces and offers a choice of functions to call
     /// </summary>
@@ -80,7 +81,12 @@ public static class CommandWrapLib
     {
         // Use the main assembly
         Assembly a = Assembly.GetEntryAssembly();
-        _methods = FindMethods(a);
+
+        // Let's find all the methods the user wanted us to wrap
+        _methods = FindWrappedMethods(a);
+
+        // Let's find all the static properties the user wanted us to wrap
+        _properties = FindWrappedProperties(a);
         
         // There was only one wrapped call - assume we're calling that!
         if (_methods.Count == 1) {
@@ -101,10 +107,34 @@ public static class CommandWrapLib
             // We didn't find a match; show general help
             ShowHelp(String.Format("Method '{0}' is not recognized.", args[0]), a, _methods);
 
-        // User didn't specify anything, just show general help
+        // User didn't specify anything - let's give them a nifty GUI!
         } else {
             ShowGui(a, _methods);
         }
+    }
+
+    /// <summary>
+    /// Find all wrapped properties
+    /// </summary>
+    /// <param name="a"></param>
+    /// <returns></returns>
+    private static List<PropertyInfo> FindWrappedProperties(Assembly a)
+    {
+        List<PropertyInfo> wrapped = new List<PropertyInfo>();
+
+        // Run through all types and all their properties
+        foreach (Type atype in a.GetTypes()) {
+            foreach (PropertyInfo pi in atype.GetProperties(BindingFlags.Static | BindingFlags.Public)) {
+
+                // Is this property wrapped?
+                if (pi.IsWrapped()) {
+                    wrapped.Add(pi);
+                }
+            }
+        }
+
+        // Here's your dictionary!
+        return wrapped;
     }
 
     /// <summary>
@@ -112,7 +142,7 @@ public static class CommandWrapLib
     /// </summary>
     /// <param name="a"></param>
     /// <returns></returns>
-    private static MethodHelper FindMethods(Assembly a)
+    private static MethodHelper FindWrappedMethods(Assembly a)
     {
         // Can we find the type and method?
         MethodHelper wrapped_calls = new MethodHelper();
@@ -153,6 +183,7 @@ public static class CommandWrapLib
     private static ComboBox _ddlMethodSelector;
     private static Label _lblMethodDescriptor;
     private static GroupBox _gMethodBox;
+    private static GroupBox _gGlobalOptions;
     private static GroupBox _gRequiredParameters;
     private static GroupBox _gOptionalParameters;
     private static Button _btnInvoke;
@@ -173,14 +204,10 @@ public static class CommandWrapLib
         f.Text = a.GetName().Name;
         f.Width = 600;
         f.Height = 400;
+        f.GotFocus += new EventHandler(f_GotFocus);
 
         // Add a group box to identify method selection
-        _gMethodBox = new GroupBox();
-        _gMethodBox.Text = "Methods";
-        _gMethodBox.Left = 10;
-        _gMethodBox.Top = 10;
-        _gMethodBox.Width = f.ClientRectangle.Width - 20;
-        _gMethodBox.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
+        _gMethodBox = NextGroupBox(f, null, "Methods");
 
         // Add a dropdown box to select from the available methods
         _ddlMethodSelector = new ComboBox();
@@ -227,23 +254,21 @@ public static class CommandWrapLib
         _gMethodBox.Controls.Add(_lblMethodDescriptor);
         _gMethodBox.Height = _lblMethodDescriptor.Top + _lblMethodDescriptor.Height + 10;
 
-        // Add placeholders for required parameters box
-        _gRequiredParameters = new GroupBox();
-        _gRequiredParameters.Text = "Required Parameters";
-        _gRequiredParameters.Left = 10;
-        _gRequiredParameters.Top = _gMethodBox.Top + _gMethodBox.Height + 10;
-        _gRequiredParameters.Width = _gMethodBox.Width;
-        _gRequiredParameters.Height = 20;
-        _gRequiredParameters.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
+        // Add global options groupbox, if necessary
+        if (_properties != null && _properties.Count > 0) {
+            _gGlobalOptions = NextGroupBox(f, _gMethodBox, "Global Options");
 
-        // Placeholder for optional param group box
-        _gOptionalParameters = new GroupBox();
-        _gOptionalParameters.Text = "Optional Parameters";
-        _gOptionalParameters.Left = 10;
-        _gOptionalParameters.Top = _gRequiredParameters.Top + _gRequiredParameters.Height + 10;
-        _gOptionalParameters.Width = _gMethodBox.Width;
-        _gOptionalParameters.Height = 20;
-        _gOptionalParameters.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
+            // Iterate through all global options
+            foreach (PropertyInfo pi in _properties) {
+                object o = pi.GetValue(null, null);
+                GenerateControlsForVariable(_gGlobalOptions, "g" + pi.Name, pi.Name, pi.GetWrapDesc(), pi.PropertyType, false, !pi.CanWrite, o);
+            }
+            FixupControlPositionsAndHeight(_gGlobalOptions);
+        }
+
+        // Add placeholder boxes for others
+        _gRequiredParameters = NextGroupBox(f, _gGlobalOptions == null ? _gMethodBox : _gGlobalOptions, "Required Parameters");
+        _gOptionalParameters = NextGroupBox(f, _gRequiredParameters, "Optional Parameters");
 
         // Create the "invoke" button
         _btnInvoke = new Button();
@@ -254,15 +279,69 @@ public static class CommandWrapLib
         _btnInvoke.Enabled = false;
         _btnInvoke.Click += new EventHandler(_btnInvoke_Click);
         _btnInvoke.Anchor = AnchorStyles.Left | AnchorStyles.Right | AnchorStyles.Bottom;
-
-        // Add this to the form
-        f.Controls.Add(_gMethodBox);
-        f.Controls.Add(_gRequiredParameters);
-        f.Controls.Add(_gOptionalParameters);
         f.Controls.Add(_btnInvoke);
 
         // Show this form and let stuff happen!
         f.ShowDialog();
+    }
+
+    /// <summary>
+    /// Detect when we got focus, and intercept problematic pastes with multiple lines of text and replace them with comma-delimited values
+    /// </summary>
+    /// <param name="sender"></param>
+    /// <param name="e"></param>
+    static void f_GotFocus(object sender, EventArgs e)
+    {
+        string s = Clipboard.GetText(TextDataFormat.UnicodeText);
+        if (s.Contains("\r\n")) {
+            Clipboard.SetText(s.Replace("\r\n", ","));
+        }
+    }
+
+    private static void FixupControlPositionsAndHeight(GroupBox g)
+    {
+        int MaxWidth = 0;
+        int MaxHeight = 0;
+
+        // Find maximum label width
+        foreach (Control c in g.Controls) {
+            if (c is Label) {
+                MaxWidth = Math.Max(MaxWidth, TextRenderer.MeasureText(((Label)c).Text, ((Label)c).Font).Width) + 4;
+            }
+            MaxHeight = Math.Max(MaxHeight, c.Top + c.Height);
+        }
+
+        // Reset control positions by width
+        foreach (Control c in g.Controls) {
+            if (c.Name.StartsWith("lbl")) {
+                c.Width = MaxWidth;
+                c.Top -= 3;
+            } else if (c.Name.StartsWith("check")) {
+                c.Left = MaxWidth + 20;
+            } else if (c.Name.StartsWith("param")) {
+                c.Left = MaxWidth + 45;
+                c.Width = g.Width - MaxWidth - 55;
+            }
+        }
+
+        // Reset height of this group box
+        g.Height = MaxHeight + 10;
+    }
+
+    private static GroupBox NextGroupBox(Form f, GroupBox previous, string name)
+    {
+        GroupBox gb = new GroupBox();
+        gb.Text = name;
+        gb.Left = 10;
+        gb.Top = 10;
+        gb.Width = f.ClientRectangle.Width - 20;
+        if (previous != null) {
+            gb.Top = gb.Top + previous.Top + previous.Height;
+        }
+        gb.Height = 20;
+        gb.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
+        f.Controls.Add(gb);
+        return gb;
     }
 
     /// <summary>
@@ -281,9 +360,13 @@ public static class CommandWrapLib
         object[] parameters = new object[pilist.Length];
         bool all_ok = true;
         for (int i = 0; i < pilist.Length; i++) {
-            parameters[i] = Type.Missing;
+            if (pilist[i].IsOptional) {
+                parameters[i] = Type.Missing;
+            } else {
+                parameters[i] = null;
+            }
 
-            // Is this an optional parameter?  Skip it if optional
+            // Is this an optional parameter or a string that could be null?  Skip it if so
             Control c = f.Controls.Find("check" + i.ToString(), true).FirstOrDefault();
             if (c is CheckBox) {
                 if (!((CheckBox)c).Checked) {
@@ -453,100 +536,20 @@ public static class CommandWrapLib
             GroupBox target = null;
             ParameterInfo[] pilist = mi.GetParameters();
             for (int i = 0; i < pilist.Length; i++) {
+
+                // Assemble some variables
                 ParameterInfo pi = pilist[i];
-
-                // Make the label
-                Label l = new Label();
-                l.Name = "lbl" + i.ToString();
-                l.Text = pi.Name;
-                l.Left = 10;
-                l.Width = 100;
-                MaxWidth = Math.Max(MaxWidth, TextRenderer.MeasureText(l.Text, l.Font).Width) + 4;
-                l.TextAlign = System.Drawing.ContentAlignment.MiddleRight;
-                l.Anchor = AnchorStyles.Left | AnchorStyles.Top;
-
-                // Make a control for the data entry
-                Control c = null;
-                if (pi.ParameterType.IsEnum) {
-                    ComboBox ddl = new ComboBox();
-                    ddl.DropDownStyle = ComboBoxStyle.DropDownList;
-                    ddl.Items.Add("(select)");
-                    foreach (var v in Enum.GetValues(pi.ParameterType)) {
-                        ddl.Items.Add(v.ToString());
-                    }
-                    ddl.SelectedIndex = 0;
-                    c = ddl;
-                } else if (pi.ParameterType == typeof(DateTime)) {
-                    c = new DateTimePicker();
-                } else if (pi.ParameterType == typeof(bool)) {
-                    ComboBox ddl = new ComboBox();
-                    ddl.DropDownStyle = ComboBoxStyle.DropDownList;
-                    ddl.Items.Add("False");
-                    ddl.Items.Add("True");
-                    ddl.SelectedIndex = 0;
-                    c = ddl;
-                } else {
-                    c = new TextBox();
-                    c.KeyDown += new KeyEventHandler(c_KeyDown);
-                }
-                c.Width = _gRequiredParameters.Width - 100 - 30;
-                c.Left = 100 + 20;
-                c.Anchor = AnchorStyles.Left | AnchorStyles.Right | AnchorStyles.Top;
-                c.Name = "param" + i.ToString();
-
-                // Is the parameter optional?
-                CheckBox check = null;
                 if (pi.IsOptional) {
-                    check = new CheckBox();
-                    check.Name = "check" + i.ToString();
-                    check.Left = c.Left;
-                    check.CheckedChanged += new EventHandler(check_CheckedChanged);
-                    check.Width = check.Height;
-                    c.Left = check.Left + check.Width + 10;
-                    c.Width = c.Width - check.Width - 10;
                     target = _gOptionalParameters;
                 } else {
                     target = _gRequiredParameters;
                 }
-
-                // Add to the target box
-                int top = 20;
-                if (target.Controls.Count > 0) {
-                    top = target.Controls[target.Controls.Count - 1].Top + 24;
-                }
-                l.Top = top; //20 + (target.Controls.Count / 2 * (30));
-                c.Top = top;
-                target.Controls.Add(l);
-                if (check != null) {
-                    check.Top = top;
-                    target.Controls.Add(check);
-                    c.Enabled = false;
-                }
-                target.Controls.Add(c);
-                target.Height = l.Top + l.Height + 10;
+                GenerateControlsForVariable(target, i.ToString(), pi.Name, null, pi.ParameterType, pi.IsOptional);
             }
 
             // Fixup everything to the maximum width value
-            foreach (Control c in _gOptionalParameters.Controls) {
-                if (c.Name.StartsWith("lbl")) {
-                    c.Width = MaxWidth;
-                    c.Top -= 3;
-                } else if (c.Name.StartsWith("check")) {
-                    c.Left = MaxWidth + 20;
-                } else if (c.Name.StartsWith("param")) {
-                    c.Left = MaxWidth + 45;
-                    c.Width = _gRequiredParameters.Width - MaxWidth - 55;
-                }
-            }
-            foreach (Control c in _gRequiredParameters.Controls) {
-                if (c.Name.StartsWith("lbl")) {
-                    c.Width = MaxWidth;
-                    c.Top -= 3;
-                } else if (c.Name.StartsWith("param")) {
-                    c.Left = MaxWidth + 20;
-                    c.Width = _gRequiredParameters.Width - MaxWidth - 30;
-                }
-            }
+            FixupControlPositionsAndHeight(_gOptionalParameters);
+            FixupControlPositionsAndHeight(_gRequiredParameters);
         }
 
         // Fix the positions of the boxes
@@ -562,21 +565,105 @@ public static class CommandWrapLib
     }
 
     /// <summary>
-    /// Intercept problematic pastes with multiple lines of text and replace them with comma-delimited values
+    /// Generate controls for a variable based on its type
     /// </summary>
-    /// <param name="sender"></param>
-    /// <param name="e"></param>
-    static void c_KeyDown(object sender, KeyEventArgs e)
+    private static void GenerateControlsForVariable(GroupBox target, string identifier, string name, string desc, Type vartype, bool optional, bool read_only = false, object default_value = null)
     {
-        if (e.KeyCode == Keys.V) {
-            if ((Control.ModifierKeys & Keys.Control) != 0) {
+        // Make the label
+        Label lbl = new Label();
+        lbl.Name = "lbl" + identifier;
+        lbl.Text = name;
+        lbl.Left = 10;
+        lbl.Width = 100;
+        lbl.TextAlign = System.Drawing.ContentAlignment.MiddleRight;
+        lbl.Anchor = AnchorStyles.Left | AnchorStyles.Top;
 
-                // Detected a paste command - Do we have "excel" data in the clipboard?  If so, convert it into a list!
-                TextBox tb = sender as TextBox;
-                string s = Clipboard.GetText(TextDataFormat.UnicodeText);
-                Clipboard.SetText(s.Replace("\r\n", ","));
+        // Make a control for the data entry
+        Control ctl = null;
+
+        // Enum variable controls
+        if (vartype.IsEnum) {
+            ComboBox ddl = new ComboBox();
+            ddl.DropDownStyle = ComboBoxStyle.DropDownList;
+            ddl.Items.Add("(select)");
+            foreach (var v in Enum.GetValues(vartype)) {
+                ddl.Items.Add(v.ToString());
+            }
+            ddl.SelectedIndex = 0;
+            if (default_value != null) {
+                string s = default_value.ToString();
+                for (int i = 0; i < ddl.Items.Count; i++) {
+                    if (string.Equals(s, (string)ddl.Items[i])) {
+                        ddl.SelectedIndex = i + 1;
+                        ddl.Tag = ddl.SelectedIndex;
+                    }
+                }
+            }
+            ctl = ddl;
+        } else if (vartype == typeof(DateTime)) {
+            DateTimePicker dtp = new DateTimePicker();
+            if (default_value is DateTime) {
+                dtp.Value = (DateTime)default_value;
+                dtp.Tag = dtp.Value;
+            }
+            ctl = dtp;
+        } else if (vartype == typeof(bool)) {
+            ComboBox ddl = new ComboBox();
+            ddl.DropDownStyle = ComboBoxStyle.DropDownList;
+            ddl.Items.Add("False");
+            ddl.Items.Add("True");
+            ddl.SelectedIndex = 0;
+            if (default_value is bool) {
+                if ((bool)default_value) {
+                    ddl.SelectedIndex = 1;
+                    ddl.Tag = ddl.SelectedIndex;
+                }
+            }
+            ctl = ddl;
+        } else {
+            TextBox tb = new TextBox();
+            if (default_value is string) {
+                tb.Text = (string)default_value;
+                tb.Tag = tb.Text;
+            }
+            ctl = tb;
+        }
+        ctl.Width = target.Width - 100 - 30;
+        ctl.Left = 100 + 20;
+        ctl.Anchor = AnchorStyles.Left | AnchorStyles.Right | AnchorStyles.Top;
+        ctl.Name = "param" + identifier;
+
+        // Is the parameter optional?
+        CheckBox chk = null;
+        if (read_only) {
+            ctl.Enabled = false;
+        } else {
+            if (optional || (vartype == typeof(string))) {
+                chk = new CheckBox();
+                chk.Name = "check" + identifier;
+                chk.Left = ctl.Left;
+                chk.CheckedChanged += new EventHandler(check_CheckedChanged);
+                chk.Width = chk.Height;
+                ctl.Left = chk.Left + chk.Width + 10;
+                ctl.Width = ctl.Width - chk.Width - 10;
             }
         }
+
+        // Add to the parent group box
+        int top = 20;
+        if (target.Controls.Count > 0) {
+            top = target.Controls[target.Controls.Count - 1].Top + 24;
+        }
+        lbl.Top = top; 
+        ctl.Top = top;
+        target.Controls.Add(lbl);
+        if (chk != null) {
+            chk.Top = top;
+            target.Controls.Add(chk);
+            ctl.Enabled = false;
+        }
+        target.Controls.Add(ctl);
+        target.Height = lbl.Top + lbl.Height + 10;
     }
 
     /// <summary>
@@ -592,6 +679,9 @@ public static class CommandWrapLib
         Control c = cb.Parent.Parent.Controls.Find("param" + cb.Name.Substring(5), true).FirstOrDefault();
         if (c != null) {
             c.Enabled = cb.Checked;
+            if (!c.Enabled) {
+                c.ResetText();
+            }
         }
     }
     #endregion
@@ -967,7 +1057,7 @@ public static class CommandWrapLib
     }
     #endregion
 
-    #region Extension Methods for "MethodInfo"
+    #region Extension Methods for "MethodInfo" and "PropertyInfo"
     /// <summary>
     /// Get the wrapper name of this method, if available
     /// </summary>
@@ -1011,6 +1101,56 @@ public static class CommandWrapLib
     public static bool IsWrapped(this MethodInfo mi)
     {
         foreach (Attribute attr in mi.GetCustomAttributes(true)) {
+            if (attr is Wrap) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// Get the wrapper name of this method, if available
+    /// </summary>
+    /// <param name="mi"></param>
+    /// <returns></returns>
+    public static string GetWrapName(this PropertyInfo pi)
+    {
+        foreach (Attribute attr in pi.GetCustomAttributes(true)) {
+            if (attr is Wrap) {
+                string wrap = ((Wrap)attr).Name;
+                if (!String.IsNullOrEmpty(wrap)) return wrap;
+            }
+        }
+
+        // Return something else
+        return pi.Name;
+    }
+
+    /// <summary>
+    /// Get the wrapper description of this method, if available
+    /// </summary>
+    /// <param name="mi"></param>
+    /// <returns></returns>
+    public static string GetWrapDesc(this PropertyInfo pi)
+    {
+        foreach (Attribute attr in pi.GetCustomAttributes(true)) {
+            if (attr is Wrap) {
+                return ((Wrap)attr).Description;
+            }
+        }
+
+        // Nothing
+        return null;
+    }
+
+    /// <summary>
+    /// Returns true if this function call is wrapped
+    /// </summary>
+    /// <param name="mi"></param>
+    /// <returns></returns>
+    public static bool IsWrapped(this PropertyInfo pi)
+    {
+        foreach (Attribute attr in pi.GetCustomAttributes(true)) {
             if (attr is Wrap) {
                 return true;
             }
