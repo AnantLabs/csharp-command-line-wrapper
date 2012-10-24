@@ -21,9 +21,12 @@ using System.Reflection;
 using System.Xml;
 using System.IO;
 using System.ComponentModel;
-using System.Windows.Forms;
 using System.Threading.Tasks;
 using System.Threading;
+#if WINFORMS_UI_WRAPPER
+using System.Windows.Forms;
+using System.Drawing;
+#endif
 
 /// <summary>
 /// This is the command wrap class - it does not have a namespace definition to prevent complications if you "drop it" directly into an existing project.
@@ -37,8 +40,24 @@ public static class CommandWrapLib
     /// </summary>
     private static string _log_folder;
     private static StreamWriter _log_writer;
+    private static MemoryStream _log_inmemory = new MemoryStream();
+    private static StreamWriter _log_memory_writer = new StreamWriter(_log_inmemory);
     private static MethodHelper _methods;
     private static List<PropertyInfo> _properties;
+
+    /// <summary>
+    /// Retrieve the log as it stands
+    /// </summary>
+    /// <returns></returns>
+    public static string GetLog()
+    {
+        _log_memory_writer.Flush();
+        _log_inmemory.Position = 0;
+        string result = null;
+        var sr = new StreamReader(_log_inmemory);
+        result = sr.ReadToEnd();
+        return result;
+    }
 
     /// <summary>
     /// Wrapper class for our output redirect
@@ -55,15 +74,21 @@ public static class CommandWrapLib
 
         public override void Write(char[] buffer, int index, int count)
         {
+            string s = new string(buffer, index, count);
+            string message = String.Format("{0} {1} {2}", DateTime.Now, Name, s);
+
             // Did the user redirect our output to a log file?  If so, do it!
             if (_log_writer != null) {
-                string s = new string(buffer, index, count);
-                _log_writer.Write(String.Format("{0} {1} {2}", DateTime.Now, Name, s));
+                _log_writer.Write(message);
                 _log_writer.Flush();
+#if WINFORMS_UI_WRAPPER
             } else if (_txtOutput != null) {
-                string s = new string(buffer, index, count);
-                _txtOutput.Invoke((MethodInvoker)delegate { _txtOutput.SuspendLayout(); _txtOutput.AppendText(String.Format("{0} {1} {2}", DateTime.Now, Name, s)); });
+                _txtOutput.Invoke((MethodInvoker)delegate { _txtOutput.SuspendLayout(); _txtOutput.AppendText(message); });
+#endif
             }
+
+            // Keep our log in memory just for kicks
+            _log_memory_writer.Write(message);
 
             // Then write our text
             OldWriter.Write(buffer, index, count);
@@ -109,7 +134,11 @@ public static class CommandWrapLib
 
         // User didn't specify anything - let's give them a nifty GUI!
         } else {
+#if WINFORMS_UI_WRAPPER
             ShowGui(a, _methods);
+#else
+            ShowHelp(null, a, _methods);
+#endif
         }
     }
 
@@ -179,6 +208,7 @@ public static class CommandWrapLib
     }
     #endregion
 
+#if WINFORMS_UI_WRAPPER
     #region WinForms Interface
     private static ComboBox _ddlMethodSelector;
     private static Label _lblMethodDescriptor;
@@ -200,14 +230,10 @@ public static class CommandWrapLib
     private static void ShowGui(Assembly a, MethodHelper wrapped_calls)
     {
         // Let's make a window that's as big as the first Windows 3.0 desktop I ever had!
-        Form f = new Form();
-        f.Text = a.GetName().Name;
-        f.Width = 600;
-        f.Height = 400;
-        f.GotFocus += new EventHandler(f_GotFocus);
+        AutoForm f = new AutoForm(600, 400, a.GetName().Name);
 
         // Add a group box to identify method selection
-        _gMethodBox = NextGroupBox(f, null, "Methods");
+        _gMethodBox = f.NextGroupBox("Methods");
 
         // Add a dropdown box to select from the available methods
         _ddlMethodSelector = new ComboBox();
@@ -255,20 +281,20 @@ public static class CommandWrapLib
         _gMethodBox.Height = _lblMethodDescriptor.Top + _lblMethodDescriptor.Height + 10;
 
         // Add global options groupbox, if necessary
-        if (_properties != null && _properties.Count > 0) {
-            _gGlobalOptions = NextGroupBox(f, _gMethodBox, "Global Options");
+        //if (_properties != null && _properties.Count > 0) {
+        //    _gGlobalOptions = f.NextGroupBox("Global Options");
 
-            // Iterate through all global options
-            foreach (PropertyInfo pi in _properties) {
-                object o = pi.GetValue(null, null);
-                GenerateControlsForVariable(_gGlobalOptions, "g" + pi.Name, pi.Name, pi.GetWrapDesc(), pi.PropertyType, false, !pi.CanWrite, o);
-            }
-            FixupControlPositionsAndHeight(_gGlobalOptions);
-        }
+        //    // Iterate through all global options
+        //    foreach (PropertyInfo pi in _properties) {
+        //        object o = pi.GetValue(null, null);
+        //        AutoForm.GenerateControlsForVariable(_gGlobalOptions, "g" + pi.Name, pi.Name, pi.GetWrapDesc(), pi.PropertyType, false, !pi.CanWrite, o);
+        //    }
+        //    FixupControlPositionsAndHeight(_gGlobalOptions);
+        //}
 
         // Add placeholder boxes for others
-        _gRequiredParameters = NextGroupBox(f, _gGlobalOptions == null ? _gMethodBox : _gGlobalOptions, "Required Parameters");
-        _gOptionalParameters = NextGroupBox(f, _gRequiredParameters, "Optional Parameters");
+        _gRequiredParameters = f.NextGroupBox("Required Parameters");
+        _gOptionalParameters = f.NextGroupBox("Optional Parameters");
 
         // Create the "invoke" button
         _btnInvoke = new Button();
@@ -282,66 +308,8 @@ public static class CommandWrapLib
         f.Controls.Add(_btnInvoke);
 
         // Show this form and let stuff happen!
+        f.MinimumSize = new Size(600, _gOptionalParameters.Top + _gOptionalParameters.Height + 100);
         f.ShowDialog();
-    }
-
-    /// <summary>
-    /// Detect when we got focus, and intercept problematic pastes with multiple lines of text and replace them with comma-delimited values
-    /// </summary>
-    /// <param name="sender"></param>
-    /// <param name="e"></param>
-    static void f_GotFocus(object sender, EventArgs e)
-    {
-        string s = Clipboard.GetText(TextDataFormat.UnicodeText);
-        if (s.Contains("\r\n")) {
-            Clipboard.SetText(s.Replace("\r\n", ","));
-        }
-    }
-
-    private static void FixupControlPositionsAndHeight(GroupBox g)
-    {
-        int MaxWidth = 0;
-        int MaxHeight = 0;
-
-        // Find maximum label width
-        foreach (Control c in g.Controls) {
-            if (c is Label) {
-                MaxWidth = Math.Max(MaxWidth, TextRenderer.MeasureText(((Label)c).Text, ((Label)c).Font).Width) + 4;
-            }
-            MaxHeight = Math.Max(MaxHeight, c.Top + c.Height);
-        }
-
-        // Reset control positions by width
-        foreach (Control c in g.Controls) {
-            if (c.Name.StartsWith("lbl")) {
-                c.Width = MaxWidth;
-                c.Top -= 3;
-            } else if (c.Name.StartsWith("check")) {
-                c.Left = MaxWidth + 20;
-            } else if (c.Name.StartsWith("param")) {
-                c.Left = MaxWidth + 45;
-                c.Width = g.Width - MaxWidth - 55;
-            }
-        }
-
-        // Reset height of this group box
-        g.Height = MaxHeight + 10;
-    }
-
-    private static GroupBox NextGroupBox(Form f, GroupBox previous, string name)
-    {
-        GroupBox gb = new GroupBox();
-        gb.Text = name;
-        gb.Left = 10;
-        gb.Top = 10;
-        gb.Width = f.ClientRectangle.Width - 20;
-        if (previous != null) {
-            gb.Top = gb.Top + previous.Top + previous.Height;
-        }
-        gb.Height = 20;
-        gb.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
-        f.Controls.Add(gb);
-        return gb;
     }
 
     /// <summary>
@@ -479,33 +447,6 @@ public static class CommandWrapLib
         _txtOutput.ResumeLayout();
     }
 
-    private static void ExecuteMethod(MethodInfo mi, object[] parameters, Form f)
-    {
-        // Create a redirect for STDOUT & STDERR
-        OutputRedirect StdOutRedir = new OutputRedirect() { Name = "STDOUT", OldWriter = Console.Out };
-        OutputRedirect StdErrRedir = new OutputRedirect() { Name = "STDERR", OldWriter = Console.Error };
-        try {
-            Console.SetOut(StdOutRedir);
-            Console.SetError(StdErrRedir);
-
-            // Execute our class
-            object result = mi.Invoke(null, parameters);
-            if (result != null) {
-                Console.WriteLine("RESULT: {0} ({1})", result, result.GetType());
-            }
-
-        // Reset the standard out and standard error - this ensures no future errors after execution
-        } finally {
-            Console.SetOut(StdOutRedir.OldWriter);
-            Console.SetError(StdErrRedir.OldWriter);
-        }
-
-        // Tell the caller that the function is finished
-        if (f != null) {
-            f.Invoke((MethodInvoker)delegate { f.Text = "FINISHED - " + f.Text; f.ControlBox = true; });
-        }
-    }
-
     /// <summary>
     /// The user has chosen a method to invoke - let's show a user interface for it
     /// </summary>
@@ -544,146 +485,62 @@ public static class CommandWrapLib
                 } else {
                     target = _gRequiredParameters;
                 }
-                GenerateControlsForVariable(target, i.ToString(), pi.Name, null, pi.ParameterType, pi.IsOptional);
+                AutoForm.GenerateControlsForVariable(target, i.ToString(), pi.Name, null, pi.ParameterType, pi.IsOptional);
             }
 
             // Fixup everything to the maximum width value
-            FixupControlPositionsAndHeight(_gOptionalParameters);
-            FixupControlPositionsAndHeight(_gRequiredParameters);
+            AutoForm.FixupControlPositionsAndHeight(_gOptionalParameters);
+            AutoForm.FixupControlPositionsAndHeight(_gRequiredParameters);
         }
 
         // Fix the positions of the boxes
         if (_gOptionalParameters.Controls.Count > 0) {
             _gOptionalParameters.Visible = true;
             _gOptionalParameters.Top = _gRequiredParameters.Top + _gRequiredParameters.Height + 20;
-            cb.Parent.Parent.MinimumSize = new System.Drawing.Size(MaxWidth + 250, _gOptionalParameters.Top + _gOptionalParameters.Height + _btnInvoke.Height + 80);
+            cb.Parent.Parent.MinimumSize = new System.Drawing.Size(600, _gOptionalParameters.Top + _gOptionalParameters.Height + _btnInvoke.Height + 80);
         } else {
             _gOptionalParameters.Visible = false;
-            cb.Parent.Parent.MinimumSize = new System.Drawing.Size(MaxWidth + 250, _gRequiredParameters.Top + _gRequiredParameters.Height + _btnInvoke.Height + 80);
+            cb.Parent.Parent.MinimumSize = new System.Drawing.Size(600, _gRequiredParameters.Top + _gRequiredParameters.Height + _btnInvoke.Height + 80);
         }
         cb.Parent.Parent.ResumeLayout();
     }
+    #endregion
+#endif
 
-    /// <summary>
-    /// Generate controls for a variable based on its type
-    /// </summary>
-    private static void GenerateControlsForVariable(GroupBox target, string identifier, string name, string desc, Type vartype, bool optional, bool read_only = false, object default_value = null)
+    #region Invoke a method and capture its activity
+#if WINFORMS_UI_WRAPPER
+    private static void ExecuteMethod(MethodInfo mi, object[] parameters, Form f)
+#else
+    private static void ExecuteMethod(MethodInfo mi, object[] parameters, object placeholder_for_forms = null)
+#endif
     {
-        // Make the label
-        Label lbl = new Label();
-        lbl.Name = "lbl" + identifier;
-        lbl.Text = name;
-        lbl.Left = 10;
-        lbl.Width = 100;
-        lbl.TextAlign = System.Drawing.ContentAlignment.MiddleRight;
-        lbl.Anchor = AnchorStyles.Left | AnchorStyles.Top;
+        // Create a redirect for STDOUT & STDERR
+        OutputRedirect StdOutRedir = new OutputRedirect() { Name = "STDOUT", OldWriter = Console.Out };
+        OutputRedirect StdErrRedir = new OutputRedirect() { Name = "STDERR", OldWriter = Console.Error };
+        try {
+            Console.SetOut(StdOutRedir);
+            Console.SetError(StdErrRedir);
 
-        // Make a control for the data entry
-        Control ctl = null;
+            // Execute our class
+            object result = mi.Invoke(null, parameters);
+            if (result != null) {
+                Console.WriteLine("RESULT: {0} ({1})", result, result.GetType());
+            }
 
-        // Enum variable controls
-        if (vartype.IsEnum) {
-            ComboBox ddl = new ComboBox();
-            ddl.DropDownStyle = ComboBoxStyle.DropDownList;
-            ddl.Items.Add("(select)");
-            foreach (var v in Enum.GetValues(vartype)) {
-                ddl.Items.Add(v.ToString());
-            }
-            ddl.SelectedIndex = 0;
-            if (default_value != null) {
-                string s = default_value.ToString();
-                for (int i = 0; i < ddl.Items.Count; i++) {
-                    if (string.Equals(s, (string)ddl.Items[i])) {
-                        ddl.SelectedIndex = i + 1;
-                        ddl.Tag = ddl.SelectedIndex;
-                    }
-                }
-            }
-            ctl = ddl;
-        } else if (vartype == typeof(DateTime)) {
-            DateTimePicker dtp = new DateTimePicker();
-            if (default_value is DateTime) {
-                dtp.Value = (DateTime)default_value;
-                dtp.Tag = dtp.Value;
-            }
-            ctl = dtp;
-        } else if (vartype == typeof(bool)) {
-            ComboBox ddl = new ComboBox();
-            ddl.DropDownStyle = ComboBoxStyle.DropDownList;
-            ddl.Items.Add("False");
-            ddl.Items.Add("True");
-            ddl.SelectedIndex = 0;
-            if (default_value is bool) {
-                if ((bool)default_value) {
-                    ddl.SelectedIndex = 1;
-                    ddl.Tag = ddl.SelectedIndex;
-                }
-            }
-            ctl = ddl;
-        } else {
-            TextBox tb = new TextBox();
-            if (default_value is string) {
-                tb.Text = (string)default_value;
-                tb.Tag = tb.Text;
-            }
-            ctl = tb;
-        }
-        ctl.Width = target.Width - 100 - 30;
-        ctl.Left = 100 + 20;
-        ctl.Anchor = AnchorStyles.Left | AnchorStyles.Right | AnchorStyles.Top;
-        ctl.Name = "param" + identifier;
-
-        // Is the parameter optional?
-        CheckBox chk = null;
-        if (read_only) {
-            ctl.Enabled = false;
-        } else {
-            if (optional || (vartype == typeof(string))) {
-                chk = new CheckBox();
-                chk.Name = "check" + identifier;
-                chk.Left = ctl.Left;
-                chk.CheckedChanged += new EventHandler(check_CheckedChanged);
-                chk.Width = chk.Height;
-                ctl.Left = chk.Left + chk.Width + 10;
-                ctl.Width = ctl.Width - chk.Width - 10;
-            }
+            // Reset the standard out and standard error - this ensures no future errors after execution
+        } finally {
+            Console.SetOut(StdOutRedir.OldWriter);
+            Console.SetError(StdErrRedir.OldWriter);
         }
 
-        // Add to the parent group box
-        int top = 20;
-        if (target.Controls.Count > 0) {
-            top = target.Controls[target.Controls.Count - 1].Top + 24;
+#if WINFORMS_UI_WRAPPER
+        // Tell the caller that the function is finished
+        if (f != null) {
+            f.Invoke((MethodInvoker)delegate { f.Text = "FINISHED - " + f.Text; f.ControlBox = true; });
         }
-        lbl.Top = top; 
-        ctl.Top = top;
-        target.Controls.Add(lbl);
-        if (chk != null) {
-            chk.Top = top;
-            target.Controls.Add(chk);
-            ctl.Enabled = false;
-        }
-        target.Controls.Add(ctl);
-        target.Height = lbl.Top + lbl.Height + 10;
+#endif
     }
 
-    /// <summary>
-    /// Enable or disable the corresponding data control when the user toggles a parameter
-    /// </summary>
-    /// <param name="sender"></param>
-    /// <param name="e"></param>
-    static void check_CheckedChanged(object sender, EventArgs e)
-    {
-        CheckBox cb = sender as CheckBox;
-
-        // Find the matching data control
-        Control c = cb.Parent.Parent.Controls.Find("param" + cb.Name.Substring(5), true).FirstOrDefault();
-        if (c != null) {
-            c.Enabled = cb.Checked;
-            if (!c.Enabled) {
-                c.ResetText();
-            }
-        }
-    }
     #endregion
 
     #region Public interface for a command line execution of an arbitrary function
@@ -1430,3 +1287,280 @@ public class MethodHelper
     }
 }
 #endregion
+
+#if WINFORMS_UI_WRAPPER
+#region AutoForm
+public class AutoForm : Form
+{
+    /// <summary>
+    /// Shared class for tooltips
+    /// </summary>
+    public static ToolTip Tips = new ToolTip();
+
+    /// <summary>
+    /// This is the next top position, vertically descending, for the next control added to this autoform
+    /// </summary>
+    private static int _next_top = 10;
+
+    public AutoForm(int width, int height, string name)
+        : base()
+    {
+        Text = name;
+        Width = width;
+        Height = height;
+        Activated += new EventHandler(AutoForm_Activated);
+    }
+
+    /// <summary>
+    /// Detect when we got focus, and intercept problematic pastes with multiple lines of text and replace them with comma-delimited values
+    /// </summary>
+    /// <param name="sender"></param>
+    /// <param name="e"></param>
+    static void AutoForm_Activated(object sender, EventArgs e)
+    {
+        string s = Clipboard.GetText(TextDataFormat.UnicodeText);
+        if (s.Contains("\r\n")) {
+            Clipboard.SetText(s.Replace("\r\n", ","));
+        }
+    }
+
+    /// <summary>
+    /// Changes the control's size to full width, anchor top | left | right, and returns the next "top" position vertically
+    /// </summary>
+    /// <param name="c"></param>
+    /// <param name="top"></param>
+    /// <returns></returns>
+    public int AddFullWidthControl(Control c, int top)
+    {
+        c.Left = 10;
+        c.Top = top;
+        c.Width = this.Width - 35;
+        c.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
+        this.Controls.Add(c);
+        _next_top = c.Top + c.Height + 10;
+        return _next_top;
+    }
+
+    /// <summary>
+    /// Shortcut for adding a control
+    /// </summary>
+    /// <param name="c"></param>
+    /// <returns></returns>
+    public int AddFullWidthControl(Control c)
+    {
+        return AddFullWidthControl(c, _next_top);
+    }
+
+    /// <summary>
+    /// Fixup all controls within a group box, using labels on the left and controls on the right, with checkboxes in the middle
+    /// </summary>
+    /// <param name="g"></param>
+    public static void FixupControlPositionsAndHeight(GroupBox g)
+    {
+        int MaxWidth = 0;
+        int MaxHeight = 0;
+
+        // Find maximum label width
+        foreach (Control c in g.Controls) {
+            if (c is Label) {
+                MaxWidth = Math.Max(MaxWidth, TextRenderer.MeasureText(((Label)c).Text, ((Label)c).Font).Width) + 4;
+            }
+            MaxHeight = Math.Max(MaxHeight, c.Top + c.Height);
+        }
+
+        // Reset control positions by width
+        foreach (Control c in g.Controls) {
+            if (c.Name.StartsWith("lbl")) {
+                c.Width = MaxWidth;
+                c.Top -= 3;
+            } else if (c.Name.StartsWith("check")) {
+                c.Left = MaxWidth + 20;
+            } else if (c.Name.StartsWith("param")) {
+                c.Left = MaxWidth + 45;
+                c.Width = g.Width - MaxWidth - 55;
+            }
+        }
+
+        // Reset height of this group box
+        g.Height = MaxHeight + 10;
+    }
+
+    /// <summary>
+    /// Generate a new groupbox and add it to this contorl
+    /// </summary>
+    /// <param name="f"></param>
+    /// <param name="previous"></param>
+    /// <param name="name"></param>
+    /// <returns></returns>
+    public GroupBox NextGroupBox(string name)
+    {
+        GroupBox gb = new GroupBox();
+        gb.Text = name;
+        AddFullWidthControl(gb);
+        return gb;
+    }
+
+    /// <summary>
+    /// Generate controls for a variable based on its type
+    /// </summary>
+    public static void GenerateControlsForVariable(GroupBox target, string identifier, string name, string desc, Type vartype, bool optional, bool read_only = false, object default_value = null)
+    {
+        // Make the label
+        Label lbl = new Label();
+        lbl.Name = "lbl" + identifier;
+        lbl.Text = name;
+        lbl.Left = 10;
+        lbl.Width = 100;
+        lbl.TextAlign = System.Drawing.ContentAlignment.MiddleRight;
+        lbl.Anchor = AnchorStyles.Left | AnchorStyles.Top;
+
+        // Make a control for the data entry
+        Control ctl = null;
+
+        // Enum variable controls
+        if (vartype.IsEnum) {
+            ComboBox ddl = new ComboBox();
+            ddl.DropDownStyle = ComboBoxStyle.DropDownList;
+            ddl.Items.Add("(select)");
+            foreach (var v in Enum.GetValues(vartype)) {
+                ddl.Items.Add(v.ToString());
+            }
+            ddl.SelectedIndex = 0;
+            if (default_value != null) {
+                string s = default_value.ToString();
+                for (int i = 0; i < ddl.Items.Count; i++) {
+                    if (string.Equals(s, (string)ddl.Items[i])) {
+                        ddl.SelectedIndex = i + 1;
+                        ddl.Tag = ddl.SelectedIndex;
+                    }
+                }
+            }
+            ctl = ddl;
+        } else if (vartype == typeof(DateTime)) {
+            DateTimePicker dtp = new DateTimePicker();
+            if (default_value is DateTime) {
+                dtp.Value = (DateTime)default_value;
+                dtp.Tag = dtp.Value;
+            }
+            ctl = dtp;
+        } else if (vartype == typeof(bool)) {
+            ComboBox ddl = new ComboBox();
+            ddl.DropDownStyle = ComboBoxStyle.DropDownList;
+            ddl.Items.Add("False");
+            ddl.Items.Add("True");
+            ddl.SelectedIndex = 0;
+            if (default_value is bool) {
+                if ((bool)default_value) {
+                    ddl.SelectedIndex = 1;
+                    ddl.Tag = ddl.SelectedIndex;
+                }
+            }
+            ctl = ddl;
+        } else {
+            TypedTextBox tb = new TypedTextBox(vartype);
+            if (default_value is string) {
+                tb.Text = (string)default_value;
+                tb.Tag = tb.Text;
+            }
+            ctl = tb;
+        }
+        ctl.Width = target.Width - 100 - 30;
+        ctl.Left = 100 + 20;
+        ctl.Anchor = AnchorStyles.Left | AnchorStyles.Right | AnchorStyles.Top;
+        ctl.Name = "param" + identifier;
+
+        // Set the tooltip if one exists
+        if (!String.IsNullOrEmpty(desc)) {
+            Tips.SetToolTip(ctl, String.Format("{0} ({1})", desc, vartype.ToString()));
+        } else {
+            Tips.SetToolTip(ctl, vartype.ToString());
+        }
+
+        // Is the parameter optional?
+        CheckBox chk = null;
+        if (read_only) {
+            ctl.Enabled = false;
+        } else {
+            if (optional || (vartype == typeof(string))) {
+                chk = new CheckBox();
+                chk.Name = "check" + identifier;
+                chk.Left = ctl.Left;
+                chk.CheckedChanged += new EventHandler(check_CheckedChanged);
+                chk.Width = chk.Height;
+                ctl.Left = chk.Left + chk.Width + 10;
+                ctl.Width = ctl.Width - chk.Width - 10;
+            }
+        }
+
+        // Add to the parent group box
+        int top = 20;
+        if (target.Controls.Count > 0) {
+            top = target.Controls[target.Controls.Count - 1].Top + 24;
+        }
+        lbl.Top = top;
+        ctl.Top = top;
+        target.Controls.Add(lbl);
+        if (chk != null) {
+            chk.Top = top;
+            target.Controls.Add(chk);
+            ctl.Enabled = false;
+        }
+        target.Controls.Add(ctl);
+        target.Height = lbl.Top + lbl.Height + 10;
+    }
+
+    /// <summary>
+    /// Enable or disable the corresponding data control when the user toggles a parameter
+    /// </summary>
+    /// <param name="sender"></param>
+    /// <param name="e"></param>
+    static void check_CheckedChanged(object sender, EventArgs e)
+    {
+        CheckBox cb = sender as CheckBox;
+
+        // Find the matching data control
+        Control c = cb.Parent.Parent.Controls.Find("param" + cb.Name.Substring(5), true).FirstOrDefault();
+        if (c != null) {
+            c.Enabled = cb.Checked;
+            if (!c.Enabled) {
+                c.ResetText();
+            }
+        }
+    }
+}
+#endregion
+
+#region Enhanced WinForms UI objects
+public class TypedTextBox : TextBox
+{
+    private Type _valuetype;
+
+    public TypedTextBox(Type t)
+        : base()
+    {
+        _valuetype = t;
+        this.TextChanged += new EventHandler(TypedTextBox_TextChanged);
+    }
+
+    void TypedTextBox_TextChanged(object sender, EventArgs e)
+    {
+        // If the underlying value of this class isn't a string, make sure the user types valid text
+        if (_valuetype != typeof(string)) {
+            string backtostring;
+            try {
+                object o = Convert.ChangeType(this.Text, _valuetype);
+                backtostring = o.ToString();
+            } catch {
+                backtostring = "";
+            }
+
+            // Reassert the corrected text
+            if (backtostring != this.Text) {
+                this.Text = backtostring;
+                System.Media.SystemSounds.Beep.Play();
+            }
+        }
+    }
+}
+#endregion
+#endif
