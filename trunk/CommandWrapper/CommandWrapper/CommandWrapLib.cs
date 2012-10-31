@@ -898,6 +898,8 @@ public static class CommandWrapLib
         string summary = null;
         if (documentation != null) {
             summary = documentation["summary"].InnerText;
+        } else {
+            summary = m.GetWrapDesc();
         }
         return ShowHelp(syntax_error_message, a, summary, advice.ToString());
     }
