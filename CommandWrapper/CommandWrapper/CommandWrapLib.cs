@@ -527,9 +527,11 @@ public static class CommandWrapLib
         // Create a redirect for STDOUT & STDERR
         OutputRedirect StdOutRedir = new OutputRedirect() { Name = "STDOUT", OldWriter = Console.Out };
         OutputRedirect StdErrRedir = new OutputRedirect() { Name = "STDERR", OldWriter = Console.Error };
+        Console.SetOut(StdOutRedir);
+        Console.SetError(StdErrRedir);
+
+        // Trap this carefully
         try {
-            Console.SetOut(StdOutRedir);
-            Console.SetError(StdErrRedir);
 
             // Execute our class
             object result = mi.Invoke(null, parameters);
@@ -537,7 +539,11 @@ public static class CommandWrapLib
                 Console.WriteLine("RESULT: {0} ({1})", result, result.GetType());
             }
 
-            // Reset the standard out and standard error - this ensures no future errors after execution
+        // Exceptions get logged
+        } catch (Exception ex) {
+            Console.WriteLine("Exception: " + ex.ToString());
+
+        // Reset the standard out and standard error - this ensures no future errors after execution
         } finally {
             Console.SetOut(StdOutRedir.OldWriter);
             Console.SetError(StdErrRedir.OldWriter);
