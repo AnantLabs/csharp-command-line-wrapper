@@ -81,11 +81,12 @@ public static class CommandWrapLib
             if (_log_writer != null) {
                 _log_writer.Write(message);
                 _log_writer.Flush();
-#if WINFORMS_UI_WRAPPER
-            } else if (_txtOutput != null) {
-                _txtOutput.Invoke((MethodInvoker)delegate { _txtOutput.SuspendLayout(); _txtOutput.AppendText(message); });
-#endif
             }
+#if WINFORMS_UI_WRAPPER
+            if (_txtOutput != null) {
+                _txtOutput.Invoke((MethodInvoker)delegate { _txtOutput.SuspendLayout(); _txtOutput.AppendText(message); });
+            }
+#endif
 
             // Keep our log in memory just for kicks
             _log_memory_writer.Write(message);
@@ -400,29 +401,38 @@ public static class CommandWrapLib
 
         // Show the parameters that are being used for this call
         ParameterInfo[] pilist = mi.GetParameters();
-        _txtOutput.AppendText(String.Format("Calling {0} with the parameters:\r\n", mi.Name));
+        StringBuilder sb = new StringBuilder();
+        sb.AppendFormat("Calling {0} with the parameters:\r\n", mi.Name);
         StringBuilder newname = new StringBuilder();
         newname.Append(mi.Name);
         newname.Append("(");
         for (int i = 0; i < pilist.Length; i++) {
-            _txtOutput.AppendText(String.Format("    {0} = {1}\r\n", pilist[i], parameters[i]));
+            sb.AppendFormat("    {0} = {1}\r\n", pilist[i], parameters[i]);
             newname.Append(parameters[i]);
             newname.Append(",");
         }
         newname.Length -= 1;
         newname.Append(");");
         _frmOutput.Text = newname.ToString();
-        _txtOutput.AppendText("\r\n");
+        sb.AppendFormat("\r\n");
+        _txtOutput.AppendText(sb.ToString());
 
-        // Spawn this method in a different thread - but only if we're not debugging!  Threads make debugging harder.
-        if (System.Diagnostics.Debugger.IsAttached) {
-            ExecuteMethod(mi, parameters, _frmOutput);
+        // Trigger a log
+        _log_folder = Environment.CurrentDirectory;
+        using (_log_writer = new StreamWriter(Path.Combine(_log_folder, String.Format("{0}_{1}.log", mi.Name, DateTime.Now.ToString("yyyy-MM-dd-HH-mm-ss"))))) {
 
-        // If no debugger is attached, running threads keeps the UI responsive.
-        } else {
-            ThreadStart work = delegate { ExecuteMethod(mi, parameters, _frmOutput); };
-            new Thread(work).Start();
+            // Spawn this method in a different thread - but only if we're not debugging!  Threads make debugging harder.
+            if (System.Diagnostics.Debugger.IsAttached) {
+                ExecuteMethod(mi, parameters, _frmOutput);
+
+            // If no debugger is attached, running threads keeps the UI responsive.
+            } else {
+                ThreadStart work = delegate { ExecuteMethod(mi, parameters, _frmOutput); };
+                new Thread(work).Start();
+            }
+            _log_writer.Close();
         }
+        _log_writer = null;
     }
 
     /// <summary>
@@ -898,8 +908,6 @@ public static class CommandWrapLib
         string summary = null;
         if (documentation != null) {
             summary = documentation["summary"].InnerText;
-        } else {
-            summary = m.GetWrapDesc();
         }
         return ShowHelp(syntax_error_message, a, summary, advice.ToString());
     }
@@ -1321,6 +1329,7 @@ public class AutoForm : Form
     static void AutoForm_Activated(object sender, EventArgs e)
     {
         string s = Clipboard.GetText(TextDataFormat.UnicodeText);
+        if (s.EndsWith("\r\n")) s = s.Substring(0, s.Length - 2);
         if (s.Contains("\r\n")) {
             Clipboard.SetText(s.Replace("\r\n", ","));
         }
@@ -1536,6 +1545,7 @@ public class AutoForm : Form
 public class TypedTextBox : TextBox
 {
     private Type _valuetype;
+    private string _last_good_value = "";
 
     public TypedTextBox(Type t)
         : base()
@@ -1550,18 +1560,22 @@ public class TypedTextBox : TextBox
         if (_valuetype != typeof(string)) {
             string backtostring;
             try {
-                object o = Convert.ChangeType(this.Text, _valuetype);
+                object o = Convert.ChangeType(this.Text.Trim(), _valuetype);
                 backtostring = o.ToString();
             } catch {
-                backtostring = "";
+                backtostring = _last_good_value;
             }
 
             // Reassert the corrected text
             if (backtostring != this.Text) {
+                int save = SelectionStart;
                 this.Text = backtostring;
                 System.Media.SystemSounds.Beep.Play();
+                SelectionStart = Math.Min(backtostring.Length, save);
+                SelectionLength = 0;
             }
         }
+        _last_good_value = this.Text;
     }
 }
 #endregion
