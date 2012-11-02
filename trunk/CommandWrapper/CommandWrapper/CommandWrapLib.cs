@@ -1571,7 +1571,7 @@ public class TypedTextBox : TextBox
                 int save = SelectionStart;
                 this.Text = backtostring;
                 System.Media.SystemSounds.Beep.Play();
-                SelectionStart = Math.Min(backtostring.Length, save);
+                SelectionStart = Math.Min(backtostring.Length, save - 1);
                 SelectionLength = 0;
             }
         }
