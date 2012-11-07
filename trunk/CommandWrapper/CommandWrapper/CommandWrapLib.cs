@@ -396,7 +396,6 @@ public static class CommandWrapLib
         _timer.Tick += new EventHandler(t_Tick);
         _timer.Start();
         _frmOutput.FormClosed += new FormClosedEventHandler(_frmOutput_FormClosed);
-        _frmOutput.Show(parent);
         _frmOutput.ControlBox = false;
 
         // Show the parameters that are being used for this call
@@ -417,22 +416,27 @@ public static class CommandWrapLib
         sb.AppendFormat("\r\n");
         _txtOutput.AppendText(sb.ToString());
 
-        // Trigger a log
-        _log_folder = Environment.CurrentDirectory;
-        using (_log_writer = new StreamWriter(Path.Combine(_log_folder, String.Format("{0}_{1}.log", mi.Name, DateTime.Now.ToString("yyyy-MM-dd-HH-mm-ss"))))) {
+        // Invoke the whole process in a new thread
+        System.Threading.Thread t = new Thread(delegate()
+        {
+            _log_folder = Environment.CurrentDirectory;
+            using (_log_writer = new StreamWriter(Path.Combine(_log_folder, String.Format("{0}_{1}.log", mi.Name, DateTime.Now.ToString("yyyy-MM-dd-HH-mm-ss"))))) {
 
-            // Spawn this method in a different thread - but only if we're not debugging!  Threads make debugging harder.
-            if (System.Diagnostics.Debugger.IsAttached) {
-                ExecuteMethod(mi, parameters, _frmOutput);
+                // Spawn this method in a different thread - but only if we're not debugging!  Threads make debugging harder.
+                if (System.Diagnostics.Debugger.IsAttached) {
+                    ExecuteMethod(mi, parameters, _frmOutput);
 
-            // If no debugger is attached, running threads keeps the UI responsive.
-            } else {
-                ThreadStart work = delegate { ExecuteMethod(mi, parameters, _frmOutput); };
-                new Thread(work).Start();
+                    // If no debugger is attached, running threads keeps the UI responsive.
+                } else {
+                    ThreadStart work = delegate { ExecuteMethod(mi, parameters, _frmOutput); };
+                    new Thread(work).Start();
+                }
+                _log_writer.Close();
             }
-            _log_writer.Close();
-        }
-        _log_writer = null;
+            _log_writer = null;
+        });
+        t.Start();
+        _frmOutput.ShowDialog(parent);
     }
 
     /// <summary>
