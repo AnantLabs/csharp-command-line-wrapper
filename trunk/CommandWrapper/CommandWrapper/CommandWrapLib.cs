@@ -136,7 +136,11 @@ public static class CommandWrapLib
 #if WINFORMS_UI_WRAPPER
             ShowGui(a, _methods);
 #else
-            ShowHelp(null, a, _methods);
+            if (_methods.Count == 1) {
+                ShowHelp(null, a, _methods.GetOnlyMethod().Methods[0]);
+            } else {
+                ShowHelp(null, a, _methods);
+            }
 #endif
         }
     }
