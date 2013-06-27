@@ -12,6 +12,9 @@
 //This is free software. Libraries and programs are distributed under the terms of the GNU Lesser
 //General Public License. Please see the files COPYING and COPYING.LESSER.
  * 
+ * REVISION HISTORY:
+ *  - Previously: Optional #define of "WINFORMS_UI_WRAPPER" generates a windows version of this command line user interface
+ *  - 2013-06-27: Corrected some crash bugs and added "WINFORMS_UI_ONLY" mode.
  */
 using System;
 using System.Collections.Generic;
@@ -107,13 +110,16 @@ public static class CommandWrapLib
     {
         // Use the main assembly
         Assembly a = Assembly.GetEntryAssembly();
-        
+
         // Let's find all the methods the user wanted us to wrap
         _methods = FindWrappedMethods(a);
 
         // Let's find all the static properties the user wanted us to wrap
         _properties = FindWrappedProperties(a);
-        
+
+#if WINFORMS_UI_ONLY
+        ShowGui(a, _methods);
+#else
         // There was only one wrapped call - assume we're calling that!
         if (_methods.Count == 1) {
             TryAllMethods(a, _methods.GetOnlyMethod(), args);
@@ -133,7 +139,7 @@ public static class CommandWrapLib
             // We didn't find a match; show general help
             ShowHelp(String.Format("Method '{0}' is not recognized.", args[0]), a, _methods);
 
-        // User didn't specify anything - let's give them a nifty GUI!
+            // User didn't specify anything - let's give them a nifty GUI!
         } else {
 #if WINFORMS_UI_WRAPPER
             ShowGui(a, _methods);
@@ -141,6 +147,7 @@ public static class CommandWrapLib
             ShowHelp(null, a, _methods);
 #endif
         }
+#endif
     }
 
     /// <summary>
@@ -414,6 +421,7 @@ public static class CommandWrapLib
         _timer.Start();
         _frmOutput.FormClosed += new FormClosedEventHandler(_frmOutput_FormClosed);
         _frmOutput.ControlBox = false;
+        _frmOutput.Show(parent);
 
         // Start a log
         _log_folder = Environment.CurrentDirectory;
@@ -445,6 +453,7 @@ public static class CommandWrapLib
             t.Start();
 
             // Show the output dialog box while we wait for the execution to complete
+            _frmOutput.Hide();
             _frmOutput.ShowDialog(parent);
 
             // Wrap up the logging
@@ -558,11 +567,11 @@ public static class CommandWrapLib
                 Console.WriteLine("RESULT: {0} ({1})", result, result.GetType());
             }
 
-        // Exceptions get logged
+            // Exceptions get logged
         } catch (Exception ex) {
             Console.WriteLine("Exception: " + ex.ToString());
 
-        // Reset the standard out and standard error - this ensures no future errors after execution
+            // Reset the standard out and standard error - this ensures no future errors after execution
         } finally {
             Console.SetOut(StdOutRedir.OldWriter);
             Console.SetError(StdErrRedir.OldWriter);
@@ -741,7 +750,7 @@ public static class CommandWrapLib
                 }
                 callparams[pos] = thisparam;
 
-            // Any parameter with a single hyphen is a "WrapLib" parameter
+                // Any parameter with a single hyphen is a "WrapLib" parameter
             } else if (thisarg.StartsWith("-")) {
                 char wrap_param = thisarg[1];
 
@@ -800,12 +809,12 @@ public static class CommandWrapLib
 
                 ExecuteMethod(m, callparams, null);
 
-            // Close gracefully
+                // Close gracefully
             } finally {
                 if (_log_writer != null) _log_writer.Close();
             }
 
-        // Show some useful diagnostics
+            // Show some useful diagnostics
         } catch (Exception ex) {
             Console.WriteLine("EXCEPTION: " + ex.ToString());
         }
